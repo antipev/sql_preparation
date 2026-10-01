@@ -632,3 +632,469 @@ VACUUM SORT ONLY fact_orders;
 - [ ] JOIN vs UNION (2.6)
 - [ ] DELETE vs TRUNCATE vs DROP
 - [ ] Detect outliers in SQL (e.g. values beyond N stddevs via window/percentiles)
+
+
+## 5. dbt
+
+**What it is:** dbt ("data build tool") turns your SQL files into tested, documented models in the warehouse. You write `SELECT` statements; dbt builds the tables/views and runs them in the right order.
+
+### 5.1 Install & setup (macOS + `uv`)
+
+`uv` is a fast Python + package + virtual-environment manager (replaces `pip` + `venv` + `pyenv`).
+
+| Step | Command | What it does |
+|---|---|---|
+| Prereq: git | `xcode-select --install` | Install command-line tools (includes git) |
+| Prereq: Homebrew | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` | Package manager for macOS |
+| Install uv | `brew install uv` | Install the Python/env manager |
+| Install Python | `uv python install 3.11` | Install a Python version (uv-managed) |
+| Create env | `uv venv` | Create a `.venv/` folder for this project |
+| Activate | `source .venv/bin/activate` | Enter the environment (macOS/Linux) |
+| Install dbt (BigQuery) | `uv pip install dbt-bigquery` | dbt + BigQuery adapter |
+| Install dbt (Redshift) | `uv pip install dbt-redshift` | dbt + Redshift adapter |
+| Quality tools | `uv pip install dbt-checkpoint pre-commit sqlfluff sqlfluff-templater-dbt yamllint` | Lint + git hooks |
+| Init project | `dbt init my_project` | Scaffold `dbt_project.yml`, `models/`, `macros/`, `seeds/` |
+
+**Gotcha:** `source .venv/bin/activate` is macOS/Linux. Windows uses `.venv\Scripts\activate`.
+
+**Connection — `~/.dbt/profiles.yml`:**
+
+```yaml
+# --- BigQuery ---
+my_bq:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth           # or: service-account
+      project: my-project
+      dataset: my_dataset
+      location: US
+      threads: 4
+
+# --- Redshift ---
+my_rs:
+  target: dev
+  outputs:
+    dev:
+      type: redshift
+      host: my-cluster.redshift.amazonaws.com
+      port: 5439
+      user: my_user
+      password: "{{ env_var('DBT_RS_PASSWORD') }}"
+      dbname: my_db
+      schema: my_schema
+      threads: 4
+```
+
+**Verify it works:**
+
+```
+dbt --version       # is dbt installed?
+dbt debug           # does the connection work?
+dbt deps            # install packages (e.g. dbt_utils)
+dbt build           # run + test everything
+pre-commit install  # set up git hooks
+```
+
+### 5.2 dbt commands (cheat sheet)
+
+| Command | How to run | What it does (plain English) |
+|---|---|---|
+| `init` | `dbt init <name>` | Create a new dbt project skeleton |
+| `debug` | `dbt debug` | Test the warehouse connection |
+| `deps` | `dbt deps` | Install packages listed in `packages.yml` |
+| `parse` | `dbt parse` | Validate the project compiles (no DB access) |
+| `list` | `dbt list` / `dbt ls` | List models / tests / sources |
+| `seed` | `dbt seed` | Load CSV files from `seeds/` into the warehouse |
+| `run` | `dbt run` | Build the models (tables / views) |
+| `test` | `dbt test` | Run the tests defined in YAML |
+| `build` | `dbt build` | `run` + `test` + `seed` + `snapshot` in one |
+| `compile` | `dbt compile` | Write the compiled SQL to `target/` without running |
+| `snapshot` | `dbt snapshot` | Build SCD2 snapshot tables |
+| `run-operation` | `dbt run-operation <macro>` | Run a macro |
+| `show` | `dbt show -s <model>` | Preview the rows a model returns |
+| `source freshness` | `dbt source freshness` | Check if sources are stale |
+| `docs generate` | `dbt docs generate` | Build the docs site |
+| `docs serve` | `dbt docs serve` | Open docs locally in a browser |
+| `clean` | `dbt clean` | Delete `target/` and `dbt_packages/` |
+| `retry` | `dbt retry` | Re-run only what failed last time |
+
+**Selectors** (run a subset):
+
+| Selector | Example | Meaning |
+|---|---|---|
+| `-s` | `dbt run -s stg_orders` | Select one model |
+| `+` (suffix) | `dbt run -s stg_orders+` | The model + everything **downstream** |
+| `+` (prefix) | `dbt run -s +stg_orders` | The model + everything **upstream** |
+| `--exclude` | `dbt run --exclude stg_*` | Run everything except a pattern |
+| `state:modified` | `dbt run -s state:modified+` | Only what changed (Slim CI) |
+
+### 5.3 Git / terminal workflow
+
+**What it is:** the branch → commit → push → rebase loop you use daily.
+
+| Task | Command | Plain English |
+|---|---|---|
+| Get latest from remote | `git fetch origin` | Download changes without merging |
+| Update your `main` | `git checkout main && git pull` | Switch to main and fast-forward it |
+| New branch (with JIRA) | `git checkout -b ABC-123-add-orders-model` | Create + switch to a feature branch named with the ticket |
+| See what changed | `git status` / `git diff` | List / show uncommitted changes |
+| Stage files | `git add dbt/models/...` or `git add .` | Mark files to commit |
+| Commit | `git commit -m "ABC-123: add stg_orders"` | Save a snapshot with a message |
+| First push | `git push -u origin ABC-123-add-orders-model` | Upload the branch and track it |
+| Rebase onto main | `git rebase main` | Replay your commits on top of the latest main |
+| Squash commits | `git rebase -i HEAD~3` | Combine / edit the last 3 commits |
+| Safe force-push | `git push --force-with-lease` | Overwrite remote **only if** nobody else pushed |
+| Stash | `git stash` / `git stash pop` | Temporarily set aside / restore changes |
+| Undo last commit | `git reset --soft HEAD~1` | Undo a commit but keep the changes staged |
+| Discard a file | `git checkout -- <file>` | Throw away a file's uncommitted changes |
+
+**Gotcha:** avoid plain `git push --force` (can overwrite teammates' work). Use `git push --force-with-lease` — it refuses if the remote changed since you last fetched.
+
+```mermaid
+graph LR
+    A[main] --> B[branch ABC-123]
+    B --> C[commit]
+    C --> D[rebase main]
+    D --> E[push --force-with-lease]
+    E --> F[open PR]
+```
+
+### 5.4 Model layers
+
+**What it is:** dbt models are organized into layers. Data flows left → right, each layer adding cleanliness and meaning.
+
+```mermaid
+graph LR
+    A[Raw source] --> B[staging<br/>dedup -> clean]
+    B --> C[intermediate<br/>joins + logic]
+    C --> D[mart<br/>business-ready]
+```
+
+| Layer | Prefix | What it does | Materialized as |
+|---|---|---|---|
+| Staging (dedup) | `stg_<source>_<entity>s_dedup` | 1:1 with raw source; remove duplicate rows | `view` |
+| Staging (clean) | `stg_<source>_<entity>s` | Rename columns, cast types, surrogate key | `incremental` |
+| Intermediate | `int_<thing>` | Joins + business logic across staging models | `ephemeral` / `view` |
+| Mart | `<business_name>` | Business-ready tables for BI tools | `table` / `incremental` |
+
+**Naming (new guidelines):** do **not** use `dim_` / `fct_` prefixes. Marts are named by business purpose (e.g. `orders`, `customer_segments`), not by technical type.
+
+**Surrogate key:** a single column that uniquely identifies a row, built from the natural keys:
+
+```sql
+{{ dbt_utils.generate_surrogate_key(['user_id', 'order_id']) }} AS _key_order
+```
+
+### 5.5 YAML (sources + models)
+
+**`sources.yml`** — declare where raw data comes from:
+
+```yaml
+version: 2
+
+sources:
+  - name: raw_orders
+    database: my-project      # BigQuery project (or Redshift db)
+    schema: raw
+    tables:
+      - name: orders
+        loaded_at_field: ingested_at   # enables freshness checks
+```
+
+**Model `schema.yml`** — describe + test each model:
+
+```yaml
+version: 2
+
+models:
+  - name: stg_orders
+    description: >
+      Staging model for raw order data.
+      One row per order.
+    columns:
+      - name: _key_order
+        description: Surrogate primary key.
+        tests:
+          - not_null
+          - unique
+
+      - name: order_id
+        description: Source order identifier.
+        tests:
+          - not_null
+
+      - name: amount_dollars
+        description: Order amount rounded to 2 decimals.
+```
+
+**Rules (from your team conventions):** `version: 2` at the top; minimum **2 tests per model**; primary key always has `not_null` + `unique`; blank line between every column block; descriptions ≤ 150 chars per line (else use `>` folded style).
+
+**`{% docs %}` blocks (optional — for shared or long descriptions):** when the same column appears in many models, or a description is long, define it **once** in a co-located `.md` file and reference it, instead of repeating the text in every model.
+
+```markdown
+<!-- _orders.md -->
+{% docs col_order_id %}
+Unique identifier for an order. This is the grain for all order models.
+{% enddocs %}
+```
+
+```yaml
+# schema.yml
+columns:
+  - name: order_id
+    description: '{{ doc("col_order_id") }}'
+    tests:
+      - not_null
+      - unique
+```
+
+**Why:** one source of truth — update the description once and every model using `{{ doc("col_order_id") }}` updates with it. Works for **column** and **table**-level descriptions.
+
+### 5.6 Materializations (view vs table vs incremental vs ephemeral)
+
+**What it is:** `materialized` controls *how* dbt stores a model in the warehouse.
+
+| Type | What happens | When to use |
+|---|---|---|
+| `view` | A saved query — no storage, always fresh | Staging dedup; small, cheap-to-recompute models |
+| `table` | A full physical table rebuilt on every run | Marts / dimensions; medium size, needs storage speed |
+| `incremental` | Only appends/updates *new* rows | Large fact tables; the workhorse for big data |
+| `ephemeral` | Inlined as a CTE into the models that use it | Intermediate models used once — avoids a stored table |
+
+Set it in the model's `config()` block:
+
+```sql
+{{ config(materialized='incremental', unique_key='_key_order') }}
+```
+
+Or at folder level in `dbt_project.yml`:
+
+```yaml
+models:
+  my_project:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: incremental
+```
+
+### 5.7 Incremental strategies
+
+**What it is:** instead of rebuilding a huge table, only process rows that are new or changed.
+
+Two strategies (on warehouse engines that support MERGE, e.g. BigQuery, Redshift):
+
+| Strategy | What it does | Use when |
+|---|---|---|
+| `delete+insert` | Delete existing rows with the same key, then insert the new version | You need to update/overwrite existing rows (safe default) |
+| `insert_overwrite` | Replace only the partitions that overlap the new data | You append to time-based partitions (cheaper) |
+
+**The `is_incremental()` pattern** — full build the first time, only new rows after:
+
+```sql
+{{ config(materialized='incremental', unique_key='_key_order') }}
+
+SELECT ...
+FROM {{ ref('stg_orders') }}
+{% if is_incremental() %}
+  -- lookback window: re-scan 3 days to catch late-arriving data
+  WHERE ingested_at >= (SELECT MAX(ingested_at) - INTERVAL '3 days' FROM {{ this }})
+{% endif %}
+```
+
+**Gotcha:** the incremental filter should use the **ingestion timestamp** (`ingested_at`), not a business-time column, and always add a small lookback window so late rows aren't missed.
+
+### 5.8 SQL conventions (SQLFluff style)
+
+**What it is:** your team's linting style, enforced by `sqlfluff` + `pre-commit`.
+
+- **4-space indentation**; `SELECT`, `FROM`, `WHERE`, `JOIN`, `CAST`, `COALESCE` in UPPERCASE.
+- **Identifiers lowercase**; **trailing commas** in SELECT lists.
+- **CTEs over subqueries** — `WITH` on its own line, CTE names indented 4 spaces, blank line between CTEs.
+- **`ref()` / `source()` only** — never hardcoded table names.
+- **No semicolons** at the end of scripts.
+- **Explicit `AS`** on computed columns (`SUM(amount) AS total`) and table aliases (`FROM {{ this }} AS source`).
+- **Reserved words** as aliases get backticks in BigQuery: `` day AS `date` ``.
+- Suppress a lint rule on one line with `-- noqa: L042`, or all with `-- noqa`.
+
+```sql
+WITH
+    source AS (
+        SELECT *
+        FROM {{ source('raw_orders', 'orders') }}
+    ),
+
+    renamed AS (
+        SELECT
+            order_id,
+            ROUND(amount / 100.0, 2) AS amount_dollars
+        FROM source
+    )
+
+SELECT *
+FROM renamed
+```
+
+### 5.9 Quality checks (run before you push)
+
+| Check | Command | What it catches |
+|---|---|---|
+| Build + test | `dbt build -s "stg_orders+"` | Broken SQL, failing tests |
+| SQL lint | `sqlfluff lint models/` (or `sqlfluff fix`) | Style violations |
+| YAML lint | `yamllint models/` | YAML formatting, long lines |
+| Pre-commit | `pre-commit run --files <file>` | All hooks (dbt-checkpoint, semicolon, ref/source) |
+
+**Why it matters:** these are the exact gates in your CI — passing them locally means your PR won't bounce in GitHub Actions.
+
+## 6. Data quality
+
+### 6.1 Data contracts
+
+**What it is:** a **contract** locks down a model's column names and types, so an upstream change fails the build instead of silently breaking things.
+
+```yaml
+# schema.yml
+models:
+  - name: fct_subscription_events
+    config:
+      contract:
+        enforced: true        # check output vs these types at build time
+      on_schema_change: fail  # fail if upstream adds/drops columns
+    columns:
+      - name: event_id
+        data_type: varchar(64)
+        tests:
+          - not_null
+          - unique
+      - name: amount_usd
+        data_type: numeric(18,2)
+```
+
+**Why it matters:** if an upstream team renames `customer_id` → `account_id`, `on_schema_change: fail` stops the pipeline at build time — instead of a dashboard silently showing wrong numbers.
+
+### 6.2 Tests — 3 levels
+
+```mermaid
+graph TD
+    A[Data quality] --> B[Contracts]
+    A --> C[Tests]
+    C --> D[1: generic<br/>unique / not_null / relationships]
+    C --> E[2: singular<br/>custom SQL]
+    C --> F[3: unit / dbt-expectations]
+```
+
+**Level 1 — generic tests** (built-in, declared in YAML):
+
+```yaml
+columns:
+  - name: order_id
+    tests:
+      - not_null
+      - unique
+  - name: user_id
+    tests:
+      - relationships:
+          to: ref('stg_users')
+          field: user_id
+  - name: status
+    tests:
+      - accepted_values:
+          values: ['completed', 'refunded']
+```
+
+**Level 2 — singular tests** (custom SQL in `tests/`, return failing rows):
+
+```sql
+-- tests/assert_no_negative_amounts.sql
+SELECT order_id
+FROM {{ ref('stg_orders') }}
+WHERE amount_dollars < 0
+```
+
+**Level 3 — unit tests / `dbt-expectations`** (richer assertions from the `dbt-expectations` package):
+
+```yaml
+- name: amount_dollars
+  tests:
+    - dbt_expectations.expect_column_values_to_be_between:
+        min_value: 0
+        max_value: 100000
+```
+
+**Rule of thumb:** at least **2 tests per model**, and the primary key always gets `not_null` + `unique`.
+
+## 7. Agentic AI & CI
+
+### 7.1 dbt project structure for AI agents
+
+**What it is:** how to lay out a dbt repo so an AI agent (Claude Code, Cursor) can work on it safely. Your `.claude` folder is the template:
+
+```
+.claude/
+  agents/        # sub-agents (e.g. sql-reviewer.md — read-only reviewer)
+  rules/         # conventions the AI must follow
+    sql-conventions.md
+    yaml-conventions.md
+    dimensional-model-conventions.md
+  skills/        # reusable workflows (e.g. skills/develop/SKILL.md)
+    develop/SKILL.md
+  settings.json  # permission allow/deny list
+dbt/
+  models/
+    <domain>/
+      staging/dedup/
+      staging/clean/
+      intermediate/
+      mart/
+  sources.yml
+dbt_project.yml
+packages.yml
+```
+
+**Why small, single-purpose models:** an AI writes better SQL when each model does one thing (dedup, clean, join, aggregate) than when it must edit one giant 500-line CTE. YAML + tests give the agent "ground truth" to verify against.
+
+### 7.2 Skills, agents & permissions
+
+- **Skills** — a `SKILL.md` that walks the agent through a workflow step-by-step (your `develop` skill: gather schema → dedup → clean → YAML → lint → docs).
+- **Agents** — a focused sub-agent (your `sql-reviewer` is read-only: checks SQLFluff, `ref()`/`source()`, test coverage, naming, docs).
+- **Permissions** (`settings.json`) — allow `dbt *`, `sqlfluff lint/fix`, `yamllint`, `pre-commit run`, `git log/diff/status/branch`; **deny** `rm -rf` and `git push --force`.
+
+**Why it matters:** giving the AI explicit rules + permissions + tests means it can iterate without breaking the repo or inventing bad SQL.
+
+### 7.3 CI/CD (Slim CI)
+
+**What it is:** when you open a PR, GitHub Actions runs `dbt build` on **only the changed models** (plus their downstream), against a temp schema.
+
+```mermaid
+graph LR
+    A[Open PR] --> B[GitHub Actions]
+    B --> C[dbt Slim CI<br/>state:modified+]
+    C --> D{Contracts + tests pass?}
+    D -->|Yes| E[Merge]
+    D -->|No| F[Block PR]
+```
+
+```yaml
+# .github/workflows/dbt_ci.yml (key steps)
+- name: Run dbt Slim CI
+  env:
+    DBT_PASSWORD: ${{ secrets.DBT_PASSWORD }}
+  run: |
+    dbt deps
+    dbt build --target ci_schema \
+      --select state:modified+ \
+      --state ./state
+```
+
+**Why it matters:** Slim CI catches broken SQL, failing tests, and contract violations **before** merge — using `state:modified+` so it only builds what actually changed, keeping it fast.
+
+
+
+
+
+
+
+
+
