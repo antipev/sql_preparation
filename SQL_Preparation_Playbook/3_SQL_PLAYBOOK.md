@@ -852,7 +852,7 @@ columns:
 
 **Why:** one source of truth — update the description once and every model using `{{ doc("col_order_id") }}` updates with it. Works for **column** and **table**-level descriptions.
 
-### 5.6 Materializations (view vs table vs incremental vs ephemeral)
+### 5.6 Materializations (view vs table vs incremental vs ephemeral vs raw_sql)
 
 **What it is:** `materialized` controls *how* dbt stores a model in the warehouse.
 
@@ -862,11 +862,15 @@ columns:
 | `table` | A full physical table rebuilt on every run | Marts / dimensions; medium size, needs storage speed |
 | `incremental` | Only appends/updates *new* rows | Large fact tables; the workhorse for big data |
 | `ephemeral` | Inlined as a CTE into the models that use it | Intermediate models used once — avoids a stored table |
+| `raw_sql` (custom) | Runs the model's SQL verbatim — you write the `CREATE`/`MERGE`/`INSERT` yourself | When built-in materializations can't express the DML you need |
 
 Set it in the model's `config()` block:
 
 ```sql
-{{ config(materialized='incremental', unique_key='_key_order') }}
+{{ config(
+    materialized='incremental',
+    unique_key='_key_order'
+) }}
 ```
 
 Or at folder level in `dbt_project.yml`:
@@ -880,31 +884,180 @@ models:
       +materialized: incremental
 ```
 
-### 5.7 Incremental strategies
-
-**What it is:** instead of rebuilding a huge table, only process rows that are new or changed.
-
-Two strategies (on warehouse engines that support MERGE, e.g. BigQuery, Redshift):
-
-| Strategy | What it does | Use when |
-|---|---|---|
-| `delete+insert` | Delete existing rows with the same key, then insert the new version | You need to update/overwrite existing rows (safe default) |
-| `insert_overwrite` | Replace only the partitions that overlap the new data | You append to time-based partitions (cheaper) |
-
-**The `is_incremental()` pattern** — full build the first time, only new rows after:
+**Custom materialization `raw_sql`** (a Jinja macro — run the SQL verbatim, no auto DDL):
 
 ```sql
-{{ config(materialized='incremental', unique_key='_key_order') }}
+-- macros/materialization_raw_bq.sql
+{% materialization raw_sql, adapter='bigquery' %}
+    {%- set identifier = model['alias'] -%}
+    {%- set target_relation = api.Relation.create(database=database, schema=schema, identifier=identifier) -%}
+    {{ run_hooks(pre_hooks) }}
+    {% call statement('main') -%}
+        {{ sql }}
+    {% endcall -%}
+    {{ run_hooks(post_hooks) }}
+    {{ return({'relations': [target_relation]}) }}
+{% endmaterialization %}
+```
 
-SELECT ...
+Then use it like any materialization: `{{ config(materialized='raw_sql') }}`.
+
+### 5.7 Incremental strategies
+
+**What it is:** instead of rebuilding a huge table, only process the rows that are new or changed. dbt has 4 strategies; the two that matter for MERGE engines (BigQuery, Redshift) are `delete+insert` and `insert_overwrite`.
+
+| Strategy | How it works | Use when |
+|---|---|---|
+| `append` | Only INSERT new rows; never touches existing rows | Append-only logs (no updates) |
+| `delete+insert` | DELETE the rows being replaced (matched by `unique_key`), then INSERT the new versions | You need to update/overwrite existing rows (safe default) |
+| `insert_overwrite` | Replace whole partitions that overlap the new data | Time-partitioned tables (cheapest, needs a partition column) |
+| `merge` | One SQL MERGE (upsert) | Redshift default |
+
+**Example 1 — `delete+insert`** (updates existing rows, no duplicates):
+
+```sql
+{{ config(
+    materialized='incremental',
+    unique_key='_key_order',
+    incremental_strategy='delete+insert'
+) }}
+
+SELECT *
 FROM {{ ref('stg_orders') }}
 {% if is_incremental() %}
-  -- lookback window: re-scan 3 days to catch late-arriving data
   WHERE ingested_at >= (SELECT MAX(ingested_at) - INTERVAL '3 days' FROM {{ this }})
 {% endif %}
 ```
 
-**Gotcha:** the incremental filter should use the **ingestion timestamp** (`ingested_at`), not a business-time column, and always add a small lookback window so late rows aren't missed.
+- **No duplicates** — `unique_key` + `delete+insert` removes the old row before writing the new one.
+- **Late-arriving data** — the `- INTERVAL '3 days'` lookback re-scans recent days.
+- **Right column** — filter on `ingested_at` (load time), not a business-time column.
+
+**Example 2 — `insert_overwrite`** (replace whole partitions):
+
+```sql
+{{ config(
+    materialized='incremental',
+    incremental_strategy='insert_overwrite',
+    partition_by={'field': 'order_date', 'data_type': 'date'}
+) }}
+
+SELECT *
+FROM {{ ref('stg_orders') }}
+{% if is_incremental() %}
+  WHERE order_date >= (SELECT MAX(order_date) - INTERVAL '3 days' FROM {{ this }})
+{% endif %}
+```
+
+- **Needs a partition column** — `insert_overwrite` requires `partition_by`, or it fails.
+- **Late-arriving data** — the lookback re-covers recent partitions.
+
+**Example 3 — advanced `insert_overwrite` (real production model):**
+
+```sql
+{% set window_start = var('window_start_date', '') | string | trim %}
+{% set start_date = modules.datetime.datetime.strptime(window_start, '%Y-%m-%d') if window_start and window_start | lower != 'none' else modules.datetime.datetime.today() %}
+{% set start_date_with_healing_window = (start_date - modules.datetime.timedelta(days=var('auto_healing_window_days'))).strftime('%Y-%m-%d') %}
+
+{{ config(
+    materialized = 'incremental',
+    incremental_strategy = 'insert_overwrite',
+    partition_by = {'field': '_processing_day', 'granularity': 'day', 'copy_partitions': true},
+    unique_key = 'order_id',
+    cluster_by = ['order_id']
+) }}
+
+WITH combined_orders AS (
+  SELECT
+    id                              AS order_id,
+    status                          AS order_status,
+    customer_id,
+    DATE(_partitiontime)            AS _processing_day,
+    CURRENT_DATETIME()              AS _updated_at
+  FROM {{ source('order_production_je_ca_append_mode_jslice_orders', 'orders') }}
+  WHERE status <> 'AWAITING_PAYMENT'
+    AND datastream_metadata.change_type <> 'DELETE'
+    AND DATE(_partitiontime) >= DATE('{{ start_date_with_healing_window }}')
+    AND DATE(_partitiontime) <= DATE('{{ var("window_end_date") }}')
+
+  UNION ALL
+
+  SELECT ... FROM {{ source('...', 'archive_orders') }}
+  WHERE DATE(_partitiontime) BETWEEN ... AND ...
+)
+SELECT ...
+FROM combined_orders
+WHERE combined_orders.just_eat = 0
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY combined_orders.order_id
+  ORDER BY IF(combined_orders.dwh_modified_timestamp IS NULL, 0, 1) DESC,
+           combined_orders.dwh_modified_timestamp DESC,
+           combined_orders.order_status ASC,
+           IF(combined_orders.accepted_at IS NULL, 0, 1) DESC
+) = 1
+```
+
+- **Healing window** — `auto_healing_window_days` re-scans N days back for late rows.
+- **Partition by ingestion time** — `DATE(_partitiontime)` reads partitions directly (no `MAX()` scan).
+- **Dedup** — `QUALIFY ROW_NUMBER()` keeps the latest row per `order_id`.
+- **CDC** — `datastream_metadata.change_type <> 'DELETE'` drops deletes.
+
+**Diagram (the 4 strategies):**
+
+![dbt incremental strategies](incremental-strategies.jpg)
+
+**BigQuery — refresh by partition, not full scan (cost optimization):**
+
+The problem: `SELECT MAX(ingested_at) FROM {{ this }}` scans the **whole table** — expensive at 1B+ rows. BigQuery also only prunes partitions when the filter uses a **literal** value, not a subquery, so `WHERE date >= (SELECT MAX(date) ...)` scans everything anyway.
+
+The fix: read the **partition metadata** (free — no data scan) instead of the data:
+
+```sql
+-- metadata only, finds which partitions changed
+SELECT partition_id, last_modified_time, total_rows
+FROM `project.dataset.INFORMATION_SCHEMA.PARTITIONS`
+WHERE table_name = 'fct_orders'
+  AND last_modified_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY);
+```
+
+A dbt **macro** injects the latest partition id as a literal:
+
+```sql
+-- macros/latest_partition.sql
+{% macro latest_partition_id(relation) %}
+  {% set sql %}
+    SELECT MAX(partition_id)
+    FROM `{{ relation.database }}.{{ relation.schema }}.INFORMATION_SCHEMA.PARTITIONS`
+    WHERE table_name = '{{ relation.identifier }}'
+  {% endset %}
+  {% set result = run_query(sql) %}
+  {% if execute and result and result.rows | length > 0 %}
+    {{ return(result.rows[0][0]) }}
+  {% else %}
+    {{ return(none) }}
+  {% endif %}
+{% endmacro %}
+```
+
+```sql
+-- models/fct_orders.sql
+{{ config(
+    materialized='incremental',
+    incremental_strategy='insert_overwrite',
+    partition_by={'field': 'order_date', 'data_type': 'date', 'granularity': 'day'},
+    require_partition_filter=true
+) }}
+
+SELECT ...
+FROM {{ ref('stg_orders') }}
+{% if is_incremental() %}
+  WHERE order_date >= '{{ latest_partition_id(this) }}'
+{% endif %}
+```
+
+**This is permanent code** (not a one-off script): the macro lives in `macros/` and is reused, and every `dbt run` executes the metadata query automatically. `require_partition_filter=true` makes dbt error if the partition filter is ever forgotten.
+
+**Gotcha:** use the **ingestion timestamp** (`ingested_at`), not a business-time column, and always add a lookback window so late rows aren't missed.
 
 ### 5.8 SQL conventions (SQLFluff style)
 
