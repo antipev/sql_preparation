@@ -1,7 +1,7 @@
-# 3. SQL PLAYBOOK — BigQuery → Redshift
+# 3. SQL PLAYBOOK — BigQuery → Redshift → Snowflake
 
-> My SQL playbook for the **Lead Analytics Engineer (PlayStation Studios)** 90-min technical round.
-> Every pattern shows **BigQuery** (my native dialect) **and** the **Redshift** equivalent, ordered **simple → medium → hard**.
+> My SQL playbook for the **Lead Analytics Engineer** 90-min technical round.
+> Every pattern shows **BigQuery** (my native dialect), **Redshift**, and **Snowflake** equivalents, ordered **simple → medium → hard**.
 > Companion docs: `1_GATHER_CONTEXT.md` (facts), `2_FOCUS_CONTEXT.md` (plan).
 
 
@@ -136,7 +136,7 @@ ORDER BY d;
 **Why it matters:** prefer a `WITH` over a nested subquery — it keeps your thought process visible to the interviewer.
 
 
-### 1.4 Conditional aggregation — KEY BigQuery → Redshift difference
+### 1.4 Conditional aggregation — KEY BigQuery → Redshift → Snowflake difference
 
 **What it is:** count or sum rows that match a condition, all in **one pass** (one table scan).
 
@@ -156,11 +156,18 @@ SELECT
   SUM(CASE WHEN event = 'share'   THEN 1 ELSE 0 END) AS shares,
   SUM(CASE WHEN event = 'comment' THEN 1 ELSE 0 END) AS comments
 FROM events;
+
+-- Snowflake: COUNT_IF (or SUM(IFF(cond, 1, 0)))
+SELECT
+  COUNT_IF(event = 'like')    AS likes,
+  COUNT_IF(event = 'share')   AS shares,
+  COUNT_IF(event = 'comment') AS comments
+FROM events;
 ```
 
 **Why it matters:** one scan beats three `WHERE event = … UNION ALL` scans (fewest table scans).
 
-**Gotcha:** BigQuery's `COUNTIF` / `SUMIF` don't exist in Redshift — always translate to `SUM(CASE WHEN …)`.
+**Gotcha:** BigQuery uses `COUNTIF`, Redshift uses `SUM(CASE WHEN …)`, Snowflake uses `COUNT_IF` (or `IFF`). Know all three.
 
 
 ## 2. Medium patterns
@@ -369,7 +376,7 @@ GROUP BY grp
 HAVING COUNT(*) >= 2;
 ```
 
-**Scenario (PlayStation, dates):** "Player sessions — a new session starts after 30 min of inactivity."
+**Scenario (gaming, dates):** "Player sessions — a new session starts after 30 min of inactivity."
 
 ```sql
 -- BigQuery (timestamp diff)
@@ -593,24 +600,30 @@ VACUUM SORT ONLY fact_orders;
 
 **Redshift has no B-tree indexes.** "Add an index" is the wrong answer — the Redshift answer is "set DISTKEY/SORTKEY and ANALYZE/VACUUM".
 
+**Snowflake** auto-manages storage in **micro-partitions** — there is no `DISTKEY`/`SORTKEY` and no `VACUUM`/`ANALYZE`. Instead, optionally define a **clustering key** on the columns you filter/join on (Snowflake re-clusters automatically):
+
+```sql
+CREATE TABLE fact_orders (...) CLUSTER BY (user_id, order_date);
+```
+
 ---
 
 
-## Appendix: Dialect map (BigQuery → Redshift)
+## Appendix: Dialect map (BigQuery → Redshift → Snowflake)
 
-| Concept | BigQuery | Redshift |
-|---|---|---|
-| Conditional count | `COUNTIF(cond)` | `SUM(CASE WHEN cond THEN 1 ELSE 0 END)` |
-| Conditional value | `IF(cond, a, b)` | `CASE WHEN cond THEN a ELSE b END` |
-| Approx distinct | `APPROX_COUNT_DISTINCT(x)` | `APPROXIMATE COUNT(DISTINCT x)` |
-| String aggregate | `STRING_AGG(x ORDER BY x)` | `LISTAGG(x, ', ') WITHIN GROUP (ORDER BY x)` |
-| Nested data | `ARRAY` / `STRUCT` + `UNNEST` | `SUPER` + PartiQL comma-join / `JSON_EXTRACT_PATH_TEXT` |
-| Dedup filter | `QUALIFY ROW_NUMBER() … = 1` | `QUALIFY ROW_NUMBER() … = 1` |
-| Date truncate | `DATE_TRUNC(d, MONTH)` | `DATE_TRUNC('month', d)` |
-| Date add | `DATE_ADD(d, INTERVAL 7 DAY)` | `DATEADD(day, 7, d)` |
-| Date diff | `DATE_DIFF(a, b, DAY)` | `DATEDIFF(day, b, a)` |
-| Timestamp diff | `TIMESTAMP_DIFF(a, b, MINUTE)` | `DATEDIFF(minute, b, a)` |
-| Query plan | `bq query --dry_run` | `EXPLAIN` + `svl_query_report` / `stl_explain` |
+| Concept | BigQuery | Redshift | Snowflake |
+|---|---|---|---|
+| Conditional count | `COUNTIF(cond)` | `SUM(CASE WHEN cond THEN 1 ELSE 0 END)` | `COUNT_IF(cond)` |
+| Conditional value | `IF(cond, a, b)` | `CASE WHEN cond THEN a ELSE b END` | `IFF(cond, a, b)` |
+| Approx distinct | `APPROX_COUNT_DISTINCT(x)` | `APPROXIMATE COUNT(DISTINCT x)` | `APPROX_COUNT_DISTINCT(x)` |
+| String aggregate | `STRING_AGG(x ORDER BY x)` | `LISTAGG(x, ', ') WITHIN GROUP (ORDER BY x)` | `LISTAGG(x, ', ') WITHIN GROUP (ORDER BY x)` |
+| Nested data | `ARRAY` / `STRUCT` + `UNNEST` | `SUPER` + PartiQL comma-join / `JSON_EXTRACT_PATH_TEXT` | `VARIANT` / `ARRAY` / `OBJECT` + `FLATTEN` |
+| Dedup filter | `QUALIFY ROW_NUMBER() … = 1` | `QUALIFY ROW_NUMBER() … = 1` | `QUALIFY ROW_NUMBER() … = 1` |
+| Date truncate | `DATE_TRUNC(d, MONTH)` | `DATE_TRUNC('month', d)` | `DATE_TRUNC('month', d)` |
+| Date add | `DATE_ADD(d, INTERVAL 7 DAY)` | `DATEADD(day, 7, d)` | `DATEADD(day, 7, d)` |
+| Date diff | `DATE_DIFF(a, b, DAY)` | `DATEDIFF(day, b, a)` | `DATEDIFF(day, a, b)` |
+| Timestamp diff | `TIMESTAMP_DIFF(a, b, MINUTE)` | `DATEDIFF(minute, b, a)` | `DATEDIFF(minute, a, b)` |
+| Query plan | `bq query --dry_run` | `EXPLAIN` + `svl_query_report` / `stl_explain` | `EXPLAIN` + `QUERY_HISTORY` |
 
 ---
 
@@ -638,6 +651,26 @@ VACUUM SORT ONLY fact_orders;
 
 **What it is:** dbt ("data build tool") turns your SQL files into tested, documented models in the warehouse. You write `SELECT` statements; dbt builds the tables/views and runs them in the right order.
 
+**How it works (the loop):**
+
+1. **Write SQL** — you write `SELECT` statements in `.sql` files.
+2. **Run dbt** — dbt reads your code, builds the DAG, and runs SQL in order.
+3. **Transform** — SQL runs in the warehouse; data is transformed.
+4. **Test & validate** — dbt runs tests to check quality and consistency.
+5. **Analyze & use** — trusted data is ready for BI tools and dashboards.
+
+```mermaid
+graph LR
+    A[Raw data] --> B[sources.yml]
+    B --> C[staging]
+    C --> D[intermediate]
+    D --> E[marts]
+    E --> F[tests]
+    F --> G[Consume]
+```
+
+![dbt concept](dbt-concept.jpg)
+
 ### 5.1 Install & setup (macOS + `uv`)
 
 `uv` is a fast Python + package + virtual-environment manager (replaces `pip` + `venv` + `pyenv`).
@@ -652,6 +685,7 @@ VACUUM SORT ONLY fact_orders;
 | Activate | `source .venv/bin/activate` | Enter the environment (macOS/Linux) |
 | Install dbt (BigQuery) | `uv pip install dbt-bigquery` | dbt + BigQuery adapter |
 | Install dbt (Redshift) | `uv pip install dbt-redshift` | dbt + Redshift adapter |
+| Install dbt (Snowflake) | `uv pip install dbt-snowflake` | dbt + Snowflake adapter |
 | Quality tools | `uv pip install dbt-checkpoint pre-commit sqlfluff sqlfluff-templater-dbt yamllint` | Lint + git hooks |
 | Init project | `dbt init my_project` | Scaffold `dbt_project.yml`, `models/`, `macros/`, `seeds/` |
 
@@ -683,6 +717,21 @@ my_rs:
       user: my_user
       password: "{{ env_var('DBT_RS_PASSWORD') }}"
       dbname: my_db
+      schema: my_schema
+      threads: 4
+
+# --- Snowflake ---
+my_sf:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: my_account.us-east-1
+      user: my_user
+      password: "{{ env_var('DBT_SF_PASSWORD') }}"
+      role: my_role
+      warehouse: my_warehouse
+      database: my_db
       schema: my_schema
       threads: 4
 ```
@@ -725,10 +774,26 @@ pre-commit install  # set up git hooks
 | Selector | Example | Meaning |
 |---|---|---|
 | `-s` | `dbt run -s stg_orders` | Select one model |
-| `+` (suffix) | `dbt run -s stg_orders+` | The model + everything **downstream** |
-| `+` (prefix) | `dbt run -s +stg_orders` | The model + everything **upstream** |
+| `+model` | `dbt run -s +stg_orders` | The model + everything **upstream** (parents) |
+| `model+` | `dbt run -s stg_orders+` | The model + everything **downstream** (children) |
+| `+model+` | `dbt run -s +stg_orders+` | The model + both directions |
+| `@model` | `dbt run -s @stg_orders` | Model + downstream + their upstream |
+| `2+model` | `dbt run -s 2+stg_orders` | Limit to 2 levels upstream |
+| `tag:name` | `dbt run -s tag:staging` | All resources with a tag |
+| `path:dir/` | `dbt run -s path:models/staging/` | All resources under a path |
+| `resource_type:` | `dbt build --exclude resource_type:seed` | Filter by node type |
 | `--exclude` | `dbt run --exclude stg_*` | Run everything except a pattern |
-| `state:modified` | `dbt run -s state:modified+` | Only what changed (Slim CI) |
+| `state:modified` | `dbt run -s state:modified+ --defer --state prod/` | Only what changed (Slim CI), defer unchanged refs |
+
+**A few more useful flags:**
+
+| Command | What it does |
+|---|---|
+| `dbt build --full-refresh` | Force incremental models to rebuild from scratch |
+| `dbt build --vars '{start_date: 2024-01-01}'` | Pass run-time variables |
+| `dbt run-operation grant_select --args '{role: bi}'` | Run a macro standalone (grants, admin SQL) |
+
+![dbt commands](dbt-commands.jpg)
 
 ### 5.3 Git / terminal workflow
 
@@ -904,14 +969,14 @@ Then use it like any materialization: `{{ config(materialized='raw_sql') }}`.
 
 ### 5.7 Incremental strategies
 
-**What it is:** instead of rebuilding a huge table, only process the rows that are new or changed. dbt has 4 strategies; the two that matter for MERGE engines (BigQuery, Redshift) are `delete+insert` and `insert_overwrite`.
+**What it is:** instead of rebuilding a huge table, only process the rows that are new or changed. dbt has 4 strategies; the two that matter for MERGE engines (BigQuery, Redshift) are `delete+insert` and `insert_overwrite`. Snowflake uses `merge` (default), `delete+insert`, or `append` instead of `insert_overwrite`.
 
 | Strategy | How it works | Use when |
 |---|---|---|
 | `append` | Only INSERT new rows; never touches existing rows | Append-only logs (no updates) |
 | `delete+insert` | DELETE the rows being replaced (matched by `unique_key`), then INSERT the new versions | You need to update/overwrite existing rows (safe default) |
 | `insert_overwrite` | Replace whole partitions that overlap the new data | Time-partitioned tables (cheapest, needs a partition column) |
-| `merge` | One SQL MERGE (upsert) | Redshift default |
+| `merge` | One SQL MERGE (upsert) | Redshift and Snowflake default |
 
 **Example 1 — `delete+insert`** (updates existing rows, no duplicates):
 
@@ -972,9 +1037,12 @@ WITH combined_orders AS (
     id                              AS order_id,
     status                          AS order_status,
     customer_id,
+    brand_flag,
+    dwh_modified_timestamp,
+    accepted_at,
     DATE(_partitiontime)            AS _processing_day,
     CURRENT_DATETIME()              AS _updated_at
-  FROM {{ source('order_production_je_ca_append_mode_jslice_orders', 'orders') }}
+  FROM {{ source('order_production_append_mode_orders', 'orders') }}
   WHERE status <> 'AWAITING_PAYMENT'
     AND datastream_metadata.change_type <> 'DELETE'
     AND DATE(_partitiontime) >= DATE('{{ start_date_with_healing_window }}')
@@ -982,12 +1050,30 @@ WITH combined_orders AS (
 
   UNION ALL
 
-  SELECT ... FROM {{ source('...', 'archive_orders') }}
-  WHERE DATE(_partitiontime) BETWEEN ... AND ...
+  SELECT
+    id                              AS order_id,
+    status                          AS order_status,
+    customer_id,
+    brand_flag,
+    dwh_modified_timestamp,
+    accepted_at,
+    DATE(_partitiontime)            AS _processing_day,
+    CURRENT_DATETIME()              AS _updated_at
+  FROM {{ source('order_production_append_mode_orders', 'archive_orders') }}
+  WHERE DATE(_partitiontime) >= DATE('{{ start_date_with_healing_window }}')
+    AND DATE(_partitiontime) <= DATE('{{ var("window_end_date") }}')
 )
-SELECT ...
+SELECT
+  order_id,
+  order_status,
+  customer_id,
+  brand_flag,
+  dwh_modified_timestamp,
+  accepted_at,
+  _processing_day,
+  _updated_at
 FROM combined_orders
-WHERE combined_orders.just_eat = 0
+WHERE combined_orders.brand_flag = 0
 QUALIFY ROW_NUMBER() OVER (
   PARTITION BY combined_orders.order_id
   ORDER BY IF(combined_orders.dwh_modified_timestamp IS NULL, 0, 1) DESC,
@@ -996,6 +1082,19 @@ QUALIFY ROW_NUMBER() OVER (
            IF(combined_orders.accepted_at IS NULL, 0, 1) DESC
 ) = 1
 ```
+
+- **Run window (Jinja)** — three steps:
+  1. `var('window_start_date')` reads a run-time **date** (default empty).
+  2. `strptime(..., '%Y-%m-%d') if <date passed> else datetime.today()` — if a date was passed (and isn't `"none"`), parse it into a real date; otherwise use **today**. This `if/else` only checks "did you pass a date?" — it does **not** compare dates.
+  3. Subtract `auto_healing_window_days` via `timedelta(days=...)` to get an earlier "healing" start, then format back with `strftime('%Y-%m-%d')`.
+  `modules.datetime` is dbt's built-in access to Python's `datetime`/`timedelta`, so all this date math happens in Jinja, not SQL.
+- **Heads-up — fixed vs dynamic window:** a **fixed** `window_start_date` (e.g. `2024-01-01`) makes every run re-read from that date onward → a growing full refresh, not incremental. For true incremental, set `window_start_date` **and** `window_end_date` to the **run date** (Airflow's `{{ ds }}`), so each run processes just that day + the healing lookback. Example: `window_start_date = 2024-01-01`, `auto_healing_window_days = 60` → `start_date_with_healing_window = 2023-11-02`; if the start never moves, each run scans `2023-11-02 → window_end_date` (growing).
+
+| Use case | `window_start_date` | `window_end_date` | What it processes |
+|---|---|---|---|
+| Daily incremental | `{{ ds }}` (run date) | `{{ ds }}` (run date) | just that one day (+ healing lookback) |
+| Backfill a range | `2024-01-01` (fixed) | `2024-01-31` (fixed) | only January 2024 |
+| Open-ended (bad) | `2024-01-01` | *(none)* | everything from Jan 1 to "now" — grows every run |
 
 - **Healing window** — `auto_healing_window_days` re-scans N days back for late rows.
 - **Partition by ingestion time** — `DATE(_partitiontime)` reads partitions directly (no `MAX()` scan).
@@ -1100,6 +1199,26 @@ FROM renamed
 | Pre-commit | `pre-commit run --files <file>` | All hooks (dbt-checkpoint, semicolon, ref/source) |
 
 **Why it matters:** these are the exact gates in your CI — passing them locally means your PR won't bounce in GitHub Actions.
+
+### 5.10 Advanced dbt interview scenarios (Q&A)
+
+**What it is:** the real-world problems interviewers ask about, with a one-line fix for each.
+
+| # | Scenario | Simple-English solution |
+|---|---|---|
+| 1 | **Incremental models** — load only new/changed data, no duplicates | `materialized='incremental'` + `unique_key` + an `is_incremental()` filter; use `delete+insert` so the old row is replaced (§5.7) |
+| 2 | **Late-arriving data** — out-of-order rows | Add a lookback window (re-scan N days) on `ingested_at`, not business time (§5.7) |
+| 3 | **Schema evolution** — renamed/removed columns | Enforce a data contract (`contract.enforced` + `on_schema_change: fail`) and alias renames in staging (§6.1) |
+| 4 | **Data quality & tests** — tests, thresholds, failures | Generic tests (`not_null`, `unique`, `relationships`, `accepted_values`) + custom singular tests; fail the build and alert (§6.2) |
+| 5 | **Performance optimization** — slow models | Partition + cluster (BQ/Snowflake) or DISTKEY/SORTKEY (Redshift); filter before joining (§4) |
+| 6 | **Snapshots / CDC** — track history over time | `dbt snapshot` with a `timestamp` strategy + `unique_key` → SCD2 (§5.2) |
+| 7 | **Lineage & impact analysis** — what breaks if I change X | `dbt docs generate` (lineage graph) + `dbt ls` + `state:modified+` (§7.3) |
+| 8 | **Macros & reusability** — keep the project DRY | Write Jinja macros for repeated logic (surrogate keys, dedup, audits) (§5.5) |
+| 9 | **State-aware deployments** — run only what changed | `dbt build -s state:modified+ --defer --state prod/` (§7.3) |
+| 10 | **CI/CD & automated testing** — reliable deployments | GitHub Actions runs `dbt build` + tests on every PR; block merge on failure (§7.3) |
+| 11 | **Data contracts & docs** — trust and clarity | Enforced contracts + YAML descriptions + `{% docs %}` blocks (§5.5, §6.1) |
+
+![dbt interview scenarios](dbt-interview-scenarios.jpg)
 
 ## 6. Data quality
 
@@ -1210,11 +1329,15 @@ packages.yml
 
 ### 7.2 Skills, agents & permissions
 
-- **Skills** — a `SKILL.md` that walks the agent through a workflow step-by-step (your `develop` skill: gather schema → dedup → clean → YAML → lint → docs).
-- **Agents** — a focused sub-agent (your `sql-reviewer` is read-only: checks SQLFluff, `ref()`/`source()`, test coverage, naming, docs).
+- **Context files** — `CLAUDE.md` (entry point) → `AGENTS.md` (the "brain": role, tech stack, directory structure, menu of skills).
+- **Skills** — a `SKILL.md` that walks the agent through a workflow step-by-step: `/develop` (scaffold SQL + YAML), `/test` (run tests + spot-check), `/deploy` (commit + open PR), `/check-test-failures` (suggest fixes).
+- **Sub-agents** — focused on-demand reviewers: `code-reviewer` (reviews SQL only), `doc-reviewer` (reviews YAML descriptions).
+- **References (lazy-loaded)** — `dbt-conventions.md`, `sql-conventions.md`, `yaml-conventions.md`, `data-warehouse.md` — loaded only when the relevant task runs.
 - **Permissions** (`settings.json`) — allow `dbt *`, `sqlfluff lint/fix`, `yamllint`, `pre-commit run`, `git log/diff/status/branch`; **deny** `rm -rf` and `git push --force`.
 
 **Why it matters:** giving the AI explicit rules + permissions + tests means it can iterate without breaking the repo or inventing bad SQL.
+
+![agentic analytics engineering](agentic-analytics-engineering.jpg)
 
 ### 7.3 CI/CD (Slim CI)
 
@@ -1242,6 +1365,21 @@ graph LR
 ```
 
 **Why it matters:** Slim CI catches broken SQL, failing tests, and contract violations **before** merge — using `state:modified+` so it only builds what actually changed, keeping it fast.
+
+**The full deployment flow (10 steps):**
+
+1. **Feature branch** — create a Git branch, update models/tests/docs, run `dbt build` locally.
+2. **Open a PR** — trigger automated checks + peer review.
+3. **CI kicks in** — install deps, compile, run tests (pass/fail on the PR).
+4. **Build in a PR schema** — validate transformations without touching prod tables.
+5. **Deploy to staging** — validate row counts, freshness, metrics, joins.
+6. **Reviewer approval + merge** — check naming, test coverage, performance, docs.
+7. **CD triggers prod** — run `dbt build` in prod with `state:modified+`.
+8. **Observability & alerts** — track run-time spikes, freshness failures, row-count anomalies.
+9. **Publish docs** — `dbt docs generate` → docs site (keeps lineage updated).
+10. **Schedule runs** — hourly/daily prod jobs with SLAs and freshness expectations.
+
+![dbt model deployment](dbt-model-deployment.jpg)
 
 
 
