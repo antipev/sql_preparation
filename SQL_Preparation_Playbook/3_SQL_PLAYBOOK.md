@@ -1,13 +1,13 @@
 # 3. SQL PLAYBOOK — BigQuery → Redshift → Snowflake
 
 > My SQL playbook for the **Lead Analytics Engineer** 90-min technical round.
-> Every pattern shows **BigQuery** (my native dialect), **Redshift**, and **Snowflake** equivalents, ordered **simple → medium → hard**.
+> Every pattern shows **BigQuery**, **Redshift**, and **Snowflake** equivalents, ordered **simple → medium → hard**.
 > Companion docs: `1_GATHER_CONTEXT.md` (facts), `2_FOCUS_CONTEXT.md` (plan).
 
 
 ## How to use this
 - Match the interviewer's words to a pattern with the **cheat sheet** below, then jump to that section.
-- Each pattern = **What it is** → **BigQuery** → **Redshift** → **Gotcha** (when it breaks).
+- Each pattern = **What it is** → **BigQuery** → **Redshift** → **Snowflake** → **Watch out** (when it breaks).
 - Scenarios are real-company style (Amazon, Netflix, Meta, Spotify), not toy examples.
 
 ```mermaid
@@ -69,7 +69,7 @@ graph TD
 **Scenario (Amazon):** "Revenue by customer segment, *including* segments with zero orders."
 
 ```sql
--- BigQuery AND Redshift (ANSI, identical)
+-- BigQuery / Redshift / Snowflake (ANSI, identical)
 SELECT
   s.segment,
   COALESCE(SUM(o.amount), 0) AS revenue
@@ -78,7 +78,15 @@ LEFT JOIN orders o ON o.segment_id = s.id
 GROUP BY s.segment;
 ```
 
-**Gotcha:** putting a filter on the *right* table in `WHERE` silently turns a `LEFT JOIN` into an `INNER JOIN`. Right-table filters go in the `ON` clause:
+**Output (revenue by segment, including zero-order segments):**
+
+| segment | revenue |
+|---|---|
+| Premium | 1500 |
+| Free | 0 |
+| Basic | 800 |
+
+**Watch out:** putting a filter on the *right* table in `WHERE` silently turns a `LEFT JOIN` into an `INNER JOIN`. Right-table filters go in the `ON` clause:
 
 ```sql
 -- WRONG: drops segments with zero orders
@@ -97,7 +105,7 @@ LEFT JOIN orders o ON o.segment_id = s.id AND o.status = 'paid'
 Three ways, in order of preference:
 
 ```sql
--- 1) BEST: LEFT JOIN + IS NULL (BigQuery AND Redshift)
+-- 1) BEST: LEFT JOIN + IS NULL (BigQuery / Redshift / Snowflake)
 SELECT u.user_id
 FROM users u
 LEFT JOIN friends f ON u.user_id = f.user_id
@@ -113,7 +121,14 @@ SELECT user_id FROM users
 WHERE user_id NOT IN (SELECT user_id FROM friends);
 ```
 
-**Gotcha:** `NOT IN` returns *no rows* if the subquery contains a `NULL`. Always prefer `NOT EXISTS` or `LEFT JOIN … IS NULL`.
+**Output (users with no friends):**
+
+| user_id |
+|---|
+| 3 |
+| 7 |
+
+**Watch out:** `NOT IN` returns *no rows* if the subquery contains a `NULL`. Always prefer `NOT EXISTS` or `LEFT JOIN … IS NULL`.
 
 
 ### 1.3 CTEs (Common Table Expressions)
@@ -121,17 +136,30 @@ WHERE user_id NOT IN (SELECT user_id FROM friends);
 **What it is:** a `WITH` block = a named, temporary result you can reuse. It reads top-to-bottom and keeps big queries understandable.
 
 ```sql
--- BigQuery AND Redshift
+-- BigQuery / Redshift / Snowflake (ANSI identical)
 WITH daily AS (
-  SELECT user_id, DATE(created_at) AS d, SUM(amount) AS revenue
-  FROM orders
-  GROUP BY 1, 2
+    SELECT
+        user_id,
+        DATE(created_at) AS d,
+        SUM(amount)      AS revenue
+    FROM orders
+    GROUP BY 1, 2
 )
-SELECT d, SUM(revenue) AS total
+SELECT
+    d,
+    SUM(revenue) AS total
 FROM daily
 GROUP BY d
 ORDER BY d;
 ```
+
+**Output (one row per day):**
+
+| d | total |
+|---|---|
+| 2024-01-01 | 1250 |
+| 2024-01-02 | 980 |
+| 2024-01-03 | 1500 |
 
 **Why it matters:** prefer a `WITH` over a nested subquery — it keeps your thought process visible to the interviewer.
 
@@ -165,9 +193,15 @@ SELECT
 FROM events;
 ```
 
+**Output (one row, three counts):**
+
+| likes | shares | comments |
+|---|---|---|
+| 1200 | 450 | 300 |
+
 **Why it matters:** one scan beats three `WHERE event = … UNION ALL` scans (fewest table scans).
 
-**Gotcha:** BigQuery uses `COUNTIF`, Redshift uses `SUM(CASE WHEN …)`, Snowflake uses `COUNT_IF` (or `IFF`). Know all three.
+**Watch out:** BigQuery uses `COUNTIF`, Redshift uses `SUM(CASE WHEN …)`, Snowflake uses `COUNT_IF` (or `IFF`). Know all three.
 
 
 ## 2. Medium patterns
@@ -188,12 +222,15 @@ FROM events;
 **Scenario (Meta/Amazon classic):** "Second highest salary."
 
 ```sql
--- BigQuery AND Redshift (DENSE_RANK handles ties correctly)
-SELECT salary
-FROM (
-  SELECT salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS rnk
-  FROM employees
+-- BigQuery / Redshift / Snowflake (DENSE_RANK handles ties correctly)
+WITH ranked AS (
+    SELECT
+        salary,
+        DENSE_RANK() OVER (ORDER BY salary DESC) AS rnk
+    FROM employees
 )
+SELECT salary
+FROM ranked
 WHERE rnk = 2;
 
 -- Alternative without a window (portable ANSI):
@@ -202,7 +239,61 @@ FROM employees
 WHERE salary < (SELECT MAX(salary) FROM employees);
 ```
 
-**Gotcha:** use `DENSE_RANK` for "nth highest" (so two people tied at the top don't break "2nd"). Use `ROW_NUMBER` for a strict, unique pick (e.g. "top 1 per group").
+**Watch out:** use `DENSE_RANK` for "nth highest" (so two people tied at the top don't break "2nd"). Use `ROW_NUMBER` for a strict, unique pick (e.g. "top 1 per group").
+
+**When to use each:**
+
+| Function | Use it for | Example |
+|---|---|---|
+| `ROW_NUMBER()` | a **strict, unique** pick (no ties) | "top 1 per customer", "first purchase per user" |
+| `RANK()` | ranking **with gaps** for ties | "top 3 salary *tiers*" — ties share rank, then skip |
+| `DENSE_RANK()` | ranking **without gaps** | "n-th highest salary", "top 3 *distinct* values" |
+
+**Example — `ROW_NUMBER()` (first purchase per customer):**
+
+```sql
+WITH ranked AS (
+    SELECT
+        *,
+        ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date) AS rn
+    FROM orders
+)
+SELECT *
+FROM ranked
+WHERE rn = 1;
+```
+
+**Output (before filter → keep `rn = 1`):**
+
+| customer_id | order_id | order_date | rn |
+|---|---|---|---|
+| 1 | 101 | 2024-01-05 | 1 |
+| 1 | 102 | 2024-01-20 | 2 |
+| 2 | 201 | 2024-02-01 | 1 |
+
+*(keeps the first order per customer: rows 101 and 201)*
+
+**Example — `RANK()` (top 3 salary tiers):**
+
+```sql
+SELECT
+    name,
+    salary,
+    RANK() OVER (ORDER BY salary DESC) AS rnk
+FROM employees
+QUALIFY rnk <= 3;
+```
+
+**Output:**
+
+| name | salary | rnk |
+|---|---|---|
+| Alice | 100 | 1 |
+| Bob | 100 | 1 |
+| Carol | 90 | 3 |
+
+*(Alice and Bob tie for 1st, so the next rank is 3 — Carol is still in the top 3)*
+
 
 
 ### 2.2 LAG / LEAD (compare to previous / next)
@@ -212,21 +303,47 @@ WHERE salary < (SELECT MAX(salary) FROM employees);
 **Scenario (Spotify):** "Days where streams were higher than the previous day."
 
 ```sql
--- BigQuery AND Redshift
+-- BigQuery / Redshift / Snowflake (ANSI identical)
 WITH daily AS (
-  SELECT DATE(listened_at) AS d, COUNT(*) AS streams
-  FROM listens
-  GROUP BY 1
+    SELECT
+        DATE(listened_at) AS d,
+        COUNT(*)         AS streams
+    FROM listens
+    GROUP BY 1
+),
+with_prev AS (
+    SELECT
+        d,
+        streams,
+        LAG(streams) OVER (ORDER BY d) AS prev_streams
+    FROM daily
 )
-SELECT d, streams
-FROM (
-  SELECT d, streams, LAG(streams) OVER (ORDER BY d) AS prev
-  FROM daily
-)
-WHERE streams > prev;
+SELECT
+    d,
+    streams,
+    prev_streams
+FROM with_prev
+WHERE streams > prev_streams;
 ```
 
-**Gotcha:** `LAG/LEAD` need a deterministic `ORDER BY`; otherwise rows are unordered and the result is wrong.
+**Output — the `with_prev` step (full sequence, shows the LAG):**
+
+| `d` | `streams` | `prev_streams` |
+|---|---|---|
+| 2024-01-01 | 100 | NULL |
+| 2024-01-02 | 150 | 100 |
+| 2024-01-03 | 120 | 150 |
+| 2024-01-04 | 205 | 120 |
+| 2024-01-05 | 190 | 205 |
+
+**Final result (`WHERE streams > prev_streams`):**
+
+| `d` | `streams` | `prev_streams` |
+|---|---|---|
+| 2024-01-02 | 150 | 100 |
+| 2024-01-04 | 205 | 120 |
+
+**Watch out:** `LAG/LEAD` need a deterministic `ORDER BY`; otherwise rows are unordered and the result is wrong.
 
 
 ### 2.3 Running totals & moving averages
@@ -234,7 +351,7 @@ WHERE streams > prev;
 **What it is:** cumulative sums / rolling averages over a time series. Signal words: **"rolling", "cumulative", "moving average"**.
 
 ```sql
--- BigQuery AND Redshift (ROWS frame is identical)
+-- BigQuery / Redshift / Snowflake (ROWS frame is identical)
 SELECT
   order_date,
   daily_revenue,
@@ -245,7 +362,22 @@ SELECT
 FROM daily_revenue;
 ```
 
-**Gotcha:** use `ROWS BETWEEN … PRECEDING AND CURRENT ROW` (not `RANGE`) for a *fixed number of rows*; `RANGE` groups ties and can give wrong rolling counts.
+**Output (8 days; `ma_7day` is a partial window until the 7th day):**
+
+| order_date | daily_revenue | running_total | ma_7day |
+|---|---|---|---|
+| 2024-01-01 | 100 | 100 | 100.00 |
+| 2024-01-02 | 150 | 250 | 125.00 |
+| 2024-01-03 | 200 | 450 | 150.00 |
+| 2024-01-04 | 50 | 500 | 125.00 |
+| 2024-01-05 | 120 | 620 | 124.00 |
+| 2024-01-06 | 180 | 800 | 133.33 |
+| 2024-01-07 | 90 | 890 | 127.14 |
+| 2024-01-08 | 210 | 1100 | 142.86 |
+
+*(the 7-day window only fills completely from 2024-01-07; earlier rows average just the rows available — e.g. 2024-01-07 = (100+150+200+50+120+180+90) ÷ 7 = 127.14)*
+
+**Watch out:** use `ROWS BETWEEN … PRECEDING AND CURRENT ROW` (not `RANGE`) for a *fixed number of rows*; `RANGE` groups ties and can give wrong rolling counts.
 
 
 ### 2.4 Top-N per group
@@ -255,17 +387,34 @@ FROM daily_revenue;
 **Scenario (Amazon):** "Top 3 salaries per department."
 
 ```sql
--- BigQuery AND Redshift
-SELECT department, employee_name, salary
-FROM (
-  SELECT department, employee_name, salary,
-         ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS rn
-  FROM employees
+-- BigQuery / Redshift / Snowflake
+WITH ranked AS (
+    SELECT
+        department,
+        employee_name,
+        salary,
+        ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS rn
+    FROM employees
 )
+SELECT
+    department,
+    employee_name,
+    salary
+FROM ranked
 WHERE rn <= 3;
 ```
 
-**Gotcha:** to keep ties (two people with the same top salary), use `DENSE_RANK` and `<= 3`; to pick *exactly* N rows, use `ROW_NUMBER`.
+**Output (top 3 salaries per department):**
+
+| department | employee_name | salary |
+|---|---|---|
+| Sales | Alice | 100 |
+| Sales | Bob | 90 |
+| Sales | Carol | 80 |
+| Eng | Dave | 120 |
+| Eng | Eve | 110 |
+
+**Watch out:** to keep ties (two people with the same top salary), use `DENSE_RANK` and `<= 3`; to pick *exactly* N rows, use `ROW_NUMBER`.
 
 
 ### 2.5 Deduplication (keep latest / earliest per key)
@@ -275,21 +424,32 @@ WHERE rn <= 3;
 **Scenario (Spotify):** "Keep each user's latest subscription status."
 
 ```sql
--- BigQuery AND Redshift: both support QUALIFY
+-- BigQuery / Redshift / Snowflake: all support QUALIFY
 SELECT *
 FROM subscriptions
 QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY updated_at DESC) = 1;
 
 -- Portable version (works everywhere, incl. MySQL/Postgres):
-SELECT *
-FROM (
-  SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY updated_at DESC) AS rn
-  FROM subscriptions
+WITH ranked AS (
+    SELECT
+        *,
+        ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY updated_at DESC) AS rn
+    FROM subscriptions
 )
+SELECT *
+FROM ranked
 WHERE rn = 1;
 ```
 
-**Gotcha:** `QUALIFY` filters on a window function *after* it's computed — it's not in MySQL, so in a "basic MySQL" screener, fall back to the subquery version.
+**Output (one latest row per user):**
+
+| user_id | subscription | updated_at |
+|---|---|---|
+| 1 | premium | 2024-01-15 |
+| 2 | basic | 2024-01-10 |
+| 3 | premium | 2024-01-20 |
+
+**Watch out:** `QUALIFY` filters on a window function *after* it's computed — it's not in MySQL, so in a "basic MySQL" screener, fall back to the subquery version.
 
 
 ### 2.6 Pivot (CASE WHEN)
@@ -299,7 +459,7 @@ WHERE rn = 1;
 **Scenario (Amazon):** "Monthly revenue per department, months as columns."
 
 ```sql
--- BigQuery AND Redshift (manual pivot)
+-- BigQuery / Redshift / Snowflake (manual pivot)
 SELECT
   department,
   SUM(CASE WHEN month = 'Jan' THEN revenue ELSE 0 END) AS jan,
@@ -309,7 +469,54 @@ FROM dept_revenue
 GROUP BY department;
 ```
 
-**Gotcha:** a manual pivot needs one `CASE WHEN` per output column — know the distinct values up front (or generate SQL dynamically).
+**Output (months as columns):**
+
+| department | jan | feb | mar |
+|---|---|---|---|
+| Sales | 300 | 250 | 400 |
+| Eng | 150 | 200 | 180 |
+
+**BigQuery native `PIVOT` (same result, no `CASE WHEN` boilerplate):**
+
+```sql
+-- BigQuery native PIVOT
+SELECT *
+FROM dept_revenue
+PIVOT(SUM(revenue) FOR month IN ('Jan', 'Feb', 'Mar'));
+```
+
+**Output (same as the manual version):**
+
+| department | Jan | Feb | Mar |
+|---|---|---|---|
+| Sales | 300 | 250 | 400 |
+| Eng | 150 | 200 | 180 |
+
+*(column names are the pivot values themselves; add an aggregate alias — `PIVOT(SUM(revenue) AS revenue FOR …)` — to get `Jan_revenue`, `Feb_revenue`, `Mar_revenue`)*
+
+**BigQuery native `UNPIVOT` (reverse: columns → rows):**
+
+```sql
+-- BigQuery native UNPIVOT (turn Jan/Feb/Mar columns back into month + revenue rows)
+SELECT *
+FROM dept_pivot
+UNPIVOT(revenue FOR month IN (Jan, Feb, Mar));
+```
+
+**Output (back to long form):**
+
+| department | month | revenue |
+|---|---|---|
+| Sales | Jan | 300 |
+| Sales | Feb | 250 |
+| Sales | Mar | 400 |
+| Eng | Jan | 150 |
+| Eng | Feb | 200 |
+| Eng | Mar | 180 |
+
+*(`UNPIVOT` drops `NULL`s by default; use `UNPIVOT INCLUDE NULLS (…)` to keep them)*
+
+**Watch out:** a manual pivot needs one `CASE WHEN` per output column — know the distinct values up front (or generate SQL dynamically). Native `PIVOT`/`UNPIVOT` exist in **BigQuery** and **Snowflake** but **not Redshift** — Redshift = manual `CASE WHEN` only.
 
 
 ### 2.7 Self-join
@@ -319,18 +526,27 @@ GROUP BY department;
 **Scenario (Amazon):** "Employees earning more than their manager."
 
 ```sql
--- BigQuery AND Redshift
+-- BigQuery / Redshift / Snowflake
 SELECT e.name AS employee
 FROM employee e
 JOIN employee m ON e.manager_id = m.id
 WHERE e.salary > m.salary;
 ```
 
-**Gotcha:** a self-join can *also* replicate `LAG/LEAD` (join on the previous key) — some teams demand pure ANSI SQL, so know this trick:
+**Output (employees earning more than their manager):**
+
+| employee |
+|---|
+| Alice |
+| Carol |
+
+**Watch out:** a self-join can *also* replicate `LAG/LEAD` (join on the previous key) — some teams demand pure ANSI SQL, so know this trick:
 
 ```sql
 -- LAG/LEAD equivalent via self-join (portable ANSI)
-SELECT a.d, a.value - b.value AS day_over_day
+SELECT
+    a.d,
+    a.value - b.value AS day_over_day
 FROM daily a
 LEFT JOIN daily b ON b.d = DATE_SUB(a.d, INTERVAL 1 DAY);
 ```
@@ -348,9 +564,59 @@ FROM events;
 -- Redshift
 SELECT APPROXIMATE COUNT(DISTINCT user_id) AS approx_users
 FROM events;
+
+-- Snowflake (same function name as BigQuery)
+SELECT APPROX_COUNT_DISTINCT(user_id) AS approx_users
+FROM events;
 ```
 
-**Gotcha:** use it for exploratory/trend numbers, never for exact reconciliation or billing.
+**Output (approximate, single value):**
+
+| approx_users |
+|---|
+| 9,998,412 |
+
+**Watch out:** use it for exploratory/trend numbers, never for exact reconciliation or billing.
+
+
+### 2.9 Plain "top N rows" — LIMIT / TOP / FETCH FIRST
+
+**What it is:** the simplest "give me the top N rows" — no window function, just `ORDER BY` + a row limit. Returns **exactly N rows** (ties broken arbitrarily).
+
+| Dialect | Syntax |
+|---|---|
+| BigQuery | `ORDER BY x DESC LIMIT 5` |
+| Redshift | `ORDER BY x DESC LIMIT 5` |
+| Snowflake | `ORDER BY x DESC LIMIT 5` (also `FETCH FIRST 5 ROWS ONLY`, `TOP 5`) |
+| SQL Server | `SELECT TOP 5 … ORDER BY x DESC` |
+
+```sql
+SELECT
+    order_id,
+    amount
+FROM orders
+ORDER BY amount DESC
+LIMIT 5;
+```
+
+**Output (top 5 by amount):**
+
+| order_id | amount |
+|---|---|
+| 9 | 500 |
+| 3 | 450 |
+| 7 | 400 |
+| 1 | 350 |
+| 5 | 300 |
+
+**When to use what:**
+
+| Approach | Returns | Use when |
+|---|---|---|
+| `LIMIT 5` | exactly 5 rows, ties arbitrary | quick "top 5", ties don't matter |
+| `ROW_NUMBER() <= 5` | exactly 5 rows, deterministic | strict, repeatable pick |
+| `DENSE_RANK() <= 5` | top 5 *distinct* values | "top 5 scores" with ties |
+| `RANK() <= 5` | top 5 with gaps | Olympic-style ranking |
 
 
 ## 3. Hard patterns
@@ -363,14 +629,18 @@ FROM events;
 **Scenario (Cinema, LeetCode):** "Find all blocks of 2+ consecutive free seats."
 
 ```sql
--- BigQuery AND Redshift (integer arithmetic, identical)
+-- BigQuery / Redshift / Snowflake (integer arithmetic, identical)
 WITH numbered AS (
   SELECT seat_id,
          seat_id - ROW_NUMBER() OVER (ORDER BY seat_id) AS grp
   FROM cinema
   WHERE free = 1
 )
-SELECT grp, MIN(seat_id) AS start_seat, MAX(seat_id) AS end_seat, COUNT(*) AS consecutive
+SELECT
+    grp,
+    MIN(seat_id) AS start_seat,
+    MAX(seat_id) AS end_seat,
+    COUNT(*)     AS consecutive
 FROM numbered
 GROUP BY grp
 HAVING COUNT(*) >= 2;
@@ -380,7 +650,7 @@ HAVING COUNT(*) >= 2;
 
 ```sql
 -- BigQuery (timestamp diff)
--- Redshift uses DATEDIFF(minute, prev_ts, event_timestamp) instead of TIMESTAMP_DIFF
+-- Redshift/Snowflake use DATEDIFF(minute, prev_ts, event_timestamp) instead of TIMESTAMP_DIFF
 WITH flagged AS (
   SELECT user_id, event_timestamp,
          LAG(event_timestamp) OVER (PARTITION BY user_id ORDER BY event_timestamp) AS prev_ts
@@ -393,7 +663,14 @@ SELECT user_id, event_timestamp,
 FROM flagged;
 ```
 
-**Gotcha:** the subtract-`ROW_NUMBER` trick needs a stable sort; ties/duplicates break the grouping.
+**Output (blocks of 2+ consecutive free seats; `grp` is the internal group id):**
+
+| grp | start_seat | end_seat | consecutive |
+|---|---|---|---|
+| 0 | 1 | 3 | 3 |
+| 3 | 7 | 8 | 2 |
+
+**Watch out:** the subtract-`ROW_NUMBER` trick needs a stable sort; ties/duplicates break the grouping.
 
 
 ### 3.2 Consecutive sequences
@@ -403,7 +680,7 @@ FROM flagged;
 **Scenario (LeetCode 180):** "Numbers that appear 3 times consecutively."
 
 ```sql
--- BigQuery AND Redshift
+-- BigQuery / Redshift / Snowflake
 WITH c AS (
   SELECT num,
          LAG(num, 1) OVER (ORDER BY id) AS prev1,
@@ -414,6 +691,14 @@ SELECT DISTINCT num
 FROM c
 WHERE num = prev1 AND num = prev2;
 ```
+
+
+**Output (numbers appearing 3× consecutively):**
+
+| num |
+|---|
+| 1 |
+| 3 |
 
 
 ### 3.3 Funnel analysis
@@ -452,9 +737,30 @@ SELECT
   SUM(CASE WHEN cart_ts     IS NOT NULL AND cart_ts     > view_ts THEN 1 ELSE 0 END) AS added_to_cart,
   SUM(CASE WHEN purchase_ts IS NOT NULL AND purchase_ts > cart_ts THEN 1 ELSE 0 END) AS purchased
 FROM steps;
+
+-- Snowflake (IFF + COUNT_IF)
+WITH steps AS (
+  SELECT user_id,
+         MIN(IFF(event = 'view',     ts, NULL)) AS view_ts,
+         MIN(IFF(event = 'cart',     ts, NULL)) AS cart_ts,
+         MIN(IFF(event = 'purchase', ts, NULL)) AS purchase_ts
+  FROM events
+  GROUP BY user_id
+)
+SELECT
+  COUNT_IF(view_ts     IS NOT NULL) AS viewed,
+  COUNT_IF(cart_ts     IS NOT NULL AND cart_ts     > view_ts) AS added_to_cart,
+  COUNT_IF(purchase_ts IS NOT NULL AND purchase_ts > cart_ts) AS purchased
+FROM steps;
 ```
 
-**Gotcha:** a *sequential* funnel requires timestamps to be ordered (step N after step N-1), not just present.
+**Output (funnel counts):**
+
+| viewed | added_to_cart | purchased |
+|---|---|---|
+| 10000 | 3500 | 1200 |
+
+**Watch out:** a *sequential* funnel requires timestamps to be ordered (step N after step N-1), not just present.
 
 
 ### 3.4 Cohort / retention analysis
@@ -482,34 +788,70 @@ JOIN activity a USING (user_id)
 GROUP BY 1, 2
 ORDER BY 1, 2;
 
--- Redshift: two differences
+-- Redshift/Snowflake: two differences (identical syntax)
 --   DATE_TRUNC('month', signup_date)   (quoted unit, not MONTH)
 --   DATEDIFF(month, c.cohort, a.act_month)  (part first)
 ```
 
-**Gotcha:** `DATE_TRUNC` syntax differs — BigQuery `DATE_TRUNC(d, MONTH)`, Redshift `DATE_TRUNC('month', d)`. And `DATE_DIFF(a, b, X)` (BQ) = `DATEDIFF(x, b, a)` (RS).
+**Output (cohort × month retention):**
+
+| cohort | month_num | active_users |
+|---|---|---|
+| 2024-01 | 0 | 500 |
+| 2024-01 | 1 | 320 |
+| 2024-01 | 2 | 210 |
+| 2024-02 | 0 | 480 |
+| 2024-02 | 1 | 300 |
+
+**Watch out:** `DATE_TRUNC` syntax differs — BigQuery `DATE_TRUNC(d, MONTH)`, Redshift/Snowflake `DATE_TRUNC('month', d)`. And `DATE_DIFF(a, b, X)` (BQ) = `DATEDIFF(x, b, a)` (Redshift/Snowflake).
 
 
-### 3.5 Nested data — ARRAY/STRUCT (UNNEST) → SUPER/JSON
+### 3.5 Nested data — ARRAY/STRUCT (UNNEST) → SUPER/JSON → VARIANT/FLATTEN
 
-**What it is:** a column can hold a list (`ARRAY`) or object (`STRUCT`) in BigQuery; Redshift stores these in a `SUPER` column.
+**What it is:** a column can hold a list (`ARRAY`) or object (`STRUCT`) in BigQuery; Redshift stores these in a `SUPER` column; Snowflake in a `VARIANT`/`ARRAY`/`OBJECT` column.
 
 ```sql
 -- BigQuery: flatten an array with UNNEST
-SELECT t.user_id, item.product, item.price
+SELECT
+    t.user_id,
+    item.product,
+    item.price
 FROM transactions t
 CROSS JOIN UNNEST(t.items) AS item;
 
 -- Redshift: SUPER type + PartiQL (comma-join flattens the array)
-SELECT t.user_id, item.product, item.price
+SELECT
+    t.user_id,
+    item.product,
+    item.price
 FROM transactions t, t.items AS item;
 
 -- Redshift: JSON path extraction (from a SUPER/JSON column)
 SELECT JSON_EXTRACT_PATH_TEXT(JSON_SERIALIZE(payload), 'user_id') AS user_id
 FROM staging.raw_telemetry;
+
+-- Snowflake: VARIANT/ARRAY + LATERAL FLATTEN
+SELECT
+    t.user_id,
+    f.value:product::STRING AS product,
+    f.value:price::NUMBER  AS price
+FROM transactions t,
+LATERAL FLATTEN(input => t.items) f;
+
+-- Snowflake: colon accessor (or GET) for JSON path
+SELECT payload:user_id::STRING AS user_id
+FROM staging.raw_telemetry;
 ```
 
-**Gotcha:** BigQuery flattens with `UNNEST`; Redshift flattens a `SUPER` array with a comma-join (PartiQL) or extracts fields with `JSON_EXTRACT_PATH_TEXT`.
+**Output (one row per item after flatten):**
+
+| user_id | product | price |
+|---|---|---|
+| 1 | Book | 15 |
+| 1 | Pen | 3 |
+| 2 | Mug | 10 |
+
+**Watch out:** BigQuery flattens with `UNNEST`; Redshift flattens a `SUPER` array with a comma-join (PartiQL); Snowflake flattens a `VARIANT`/`ARRAY` with `FLATTEN`.
 
 
 ### 3.6 Complex multi-step (nested CTEs)
@@ -517,7 +859,7 @@ FROM staging.raw_telemetry;
 **What it is:** chain several CTEs, one logical step per CTE, filtering/aggregating before each join.
 
 ```sql
--- BigQuery AND Redshift (pattern, not syntax)
+-- BigQuery / Redshift / Snowflake (pattern, not syntax)
 WITH filtered AS (
   SELECT * FROM orders WHERE order_date >= '2026-01-01'   -- filter early
 ),
@@ -526,13 +868,24 @@ user_totals AS (
   FROM filtered
   GROUP BY user_id                                        -- aggregate before join
 )
-SELECT c.country, COUNT(r.user_id) AS buyers, SUM(r.total) AS revenue
+SELECT
+    c.country,
+    COUNT(r.user_id) AS buyers,
+    SUM(r.total)     AS revenue
 FROM user_totals r
 JOIN customers c ON c.user_id = r.user_id                 -- co-located join
 GROUP BY c.country;
 ```
 
-**Gotcha:** keep each CTE **single-purpose** — this is also how you hand readable, testable SQL to an AI agent or reviewer.
+**Output (buyers + revenue by country):**
+
+| country | buyers | revenue |
+|---|---|---|
+| US | 120 | 5400 |
+| CA | 45 | 2100 |
+| UK | 30 | 1500 |
+
+**Watch out:** keep each CTE **single-purpose** — this is also how you hand readable, testable SQL to an AI agent or reviewer.
 
 
 ## 4. Optimization (onsite-style)
@@ -558,14 +911,31 @@ SELECT COUNT(*) FROM orders WHERE status = 'refunded';
 ```
 
 
-### 4.2 Query plans (`EXPLAIN`)
+**Output (one scan):**
 
-**What it is:** `EXPLAIN` shows *how* the database executes a query (scans, joins, sorts) without running it.
+| completed | refunded |
+|---|---|
+| 850 | 60 |
 
-- **Redshift** has `EXPLAIN` and system views:
-  - `svl_query_report` — per-step rows, bytes, `is_diskbased` (spilled to disk).
-  - `stl_explain` — the plan; watch for `DS_DIST_INNER` / `DS_DIST_ALL_NONE` (data reshuffled across nodes = bad).
-- **BigQuery** has no classic `EXPLAIN`; use `bq query --dry_run` to see bytes scanned, and the console execution graph.
+
+### 4.2 Query plans & cost (`EXPLAIN` / `--dry_run`)
+
+**What it is:** before tuning, see *how* the database executes a query and *where the cost is* — without running it.
+
+**BigQuery — bytes scanned is the #1 cost lever:**
+- `bq query --dry_run` → estimates **bytes scanned** before you run (the cost driver).
+- The console **Execution details** graph → stages, shuffle, and per-stage slot time.
+- `INFORMATION_SCHEMA.JOBS_BY_PROJECT` → `total_bytes_processed`, `total_slot_ms` for runs that already happened.
+
+**The BigQuery tuning sequence (4 steps):**
+1. `--dry_run` → confirm the bytes scanned.
+2. Filter on the **partition / cluster** columns so BigQuery prunes (fewer bytes = cheaper + faster).
+3. Select **only the columns you need** — `SELECT *` reads every column.
+4. Avoid **cross joins** / cartesian products (they explode bytes).
+
+**Redshift — `EXPLAIN` + system views:**
+- `svl_query_report` — per-step rows, bytes, `is_diskbased` (spilled to disk).
+- `stl_explain` — the plan; watch for `DS_DIST_INNER` / `DS_DIST_ALL_NONE` (data reshuffled across nodes = bad).
 
 **The Redshift tuning sequence (4 steps):**
 1. `svl_query_report` → find `is_diskbased = true` or huge `output_bytes` (the bottleneck).
@@ -573,10 +943,26 @@ SELECT COUNT(*) FROM orders WHERE status = 'refunded';
 3. Check the `SORTKEY` column is used in `WHERE`; run `ANALYZE <table>`.
 4. Refactor CTEs to filter/aggregate *before* joining.
 
+**Snowflake —** `EXPLAIN` + `QUERY_HISTORY` (see the Appendix dialect map).
 
-### 4.3 Redshift physical design — the BigQuery → Redshift shift
 
-**BigQuery** auto-manages storage (partitioning/clustering, serverless). **Redshift** needs you to set physical layout manually:
+### 4.3 Physical design — the BigQuery → Redshift → Snowflake shift
+
+**BigQuery** auto-manages storage (serverless, no `VACUUM`/indexes), but you steer it with **partitioning + clustering** to prune reads:
+
+```sql
+-- BigQuery: partition by date + cluster by user to prune reads
+CREATE TABLE fact_orders (
+  order_id  INT64 NOT NULL,
+  user_id   INT64 NOT NULL,
+  amount    NUMERIC,
+  order_ts  TIMESTAMP NOT NULL
+)
+PARTITION BY DATE(order_ts)
+CLUSTER BY user_id;
+```
+
+**Redshift** needs you to set physical layout manually:
 
 | Term | Definition (plain English) |
 |---|---|
@@ -605,6 +991,92 @@ VACUUM SORT ONLY fact_orders;
 ```sql
 CREATE TABLE fact_orders (...) CLUSTER BY (user_id, order_date);
 ```
+
+### 4.4 BigQuery cost-optimization techniques (cheat sheet)
+
+**The single biggest lever: reduce bytes scanned.** Every technique below is a way to shrink the data BigQuery has to read, move (shuffle), or re-read.
+
+**A. Scan less data**
+
+| Technique | Plain English |
+|---|---|
+| Filter early | Push `WHERE` filters into the earliest CTEs — the shuffle (moving rows between slots) is the most expensive part, so shrink row count up front. |
+| Static partition pruning | Filter the partition column with a *constant* (or `_TABLE_SUFFIX` / a `SELECT MIN()` scalar), not a value discovered by a `JOIN`. Join-determined filters stop BigQuery from skipping blocks. |
+| Keep columns "naked" | Don't wrap a column in a function in `WHERE` (e.g. `WHERE CAST(ts AS DATE) = …`) — it forces a full scan. Apply the function to the *parameter*, not the column. |
+| Select only needed columns / drop useless joins | `SELECT *` reads every column; drop joins to tables whose columns you don't actually use (a join can also change row counts). |
+
+**B. Scan fewer times**
+
+| Technique | Plain English |
+|---|---|
+| Consolidate repeated table access | Pull several metrics in **one** scan with `COUNTIF` / conditional aggregation instead of `SELECT`-ing the same table multiple times. |
+| `GROUPING SETS` over `UNION ALL` | One scan for many aggregation levels; `UNION ALL` re-reads the data once per branch. |
+| Window functions over self-joins | `ROW_NUMBER()` / `LEAD` / `LAG` / `RANK` do it in a single pass; a self-join (e.g. `MAX + GROUP BY`, or `JOIN ON <=`) reads the data twice. |
+
+**C. Cheaper joins**
+
+| Technique | Plain English |
+|---|---|
+| Aggregate / dedupe before joining | Reduce to the target grain before the join so fewer keys get shuffled. |
+| Avoid cartesian (cross) joins | `A × B` explodes row counts → "Resources Exceeded" / "Timeout" + massive slot usage. |
+
+**D. Control CTE materialization**
+
+| Technique | Plain English |
+|---|---|
+| Use a `TEMP TABLE` for heavy/reused CTEs | BigQuery does **not** cache non-recursive CTEs — each reference re-executes it. Materialize complex logic once into a `TEMPORARY TABLE`. |
+
+**E. Pipeline-level (not one query)**
+
+| Technique | Plain English |
+|---|---|
+| Incremental loads | Process only the delta (new/changed rows) instead of full refreshes; the KPI is *slot-milliseconds*. |
+| Split backfills into batches | Massive multi-year backfills in one query cause `timeout` / `resourcesExceeded`; batch them. |
+| Avoid Jinja/dynamic-SQL redundancy | A loop repeating a block 10× compiles into a 1,000-line wall of duplicated SQL — keep generated code DRY. |
+
+*(§4.2 is the process — this is the catalog.)*
+
+### 4.5 Recursive CTE (advanced)
+
+**What it is:** a `WITH RECURSIVE` CTE that references *itself* to walk hierarchical or graph data (org chart, bill-of-materials, tree paths). It has an **anchor** (seed rows) plus a **recursive** member joined back to itself, combined with `UNION ALL`.
+
+**Example (BigQuery — org chart, CEO down):**
+
+```sql
+WITH RECURSIVE org AS (
+  -- anchor (base case): the CEO
+  SELECT id, name, manager_id, 0 AS depth
+  FROM employees
+  WHERE manager_id IS NULL
+
+  UNION ALL
+
+  -- recursive step: each person's direct reports, one level deeper
+  SELECT e.id, e.name, e.manager_id, org.depth + 1
+  FROM employees e
+  JOIN org ON e.manager_id = org.id
+)
+SELECT id, name, depth
+FROM org
+ORDER BY depth, id;
+```
+
+**Output (partial):**
+
+| id | name | depth |
+|---|---|---|
+| 1 | Alice | 0 |
+| 2 | Bob | 1 |
+| 3 | Carol | 1 |
+| 4 | Dave | 2 |
+
+**Benefits:**
+
+- Traverses a hierarchy in **one query** — no procedural loops, no guessing the max depth.
+- BigQuery **materializes** recursive CTE results (unlike non-recursive CTEs), so the result is computed **once** — cheaper if referenced repeatedly.
+- Replaces N self-joins that re-scan the table and must know depth in advance.
+
+**Watch out:** use `UNION ALL` (not `UNION DISTINCT`); add a termination condition — BigQuery caps recursion depth (default 100, configurable).
 
 ---
 
@@ -689,7 +1161,7 @@ graph LR
 | Quality tools | `uv pip install dbt-checkpoint pre-commit sqlfluff sqlfluff-templater-dbt yamllint` | Lint + git hooks |
 | Init project | `dbt init my_project` | Scaffold `dbt_project.yml`, `models/`, `macros/`, `seeds/` |
 
-**Gotcha:** `source .venv/bin/activate` is macOS/Linux. Windows uses `.venv\Scripts\activate`.
+**Watch out:** `source .venv/bin/activate` is macOS/Linux. Windows uses `.venv\Scripts\activate`.
 
 **Connection — `~/.dbt/profiles.yml`:**
 
@@ -815,7 +1287,7 @@ pre-commit install  # set up git hooks
 | Undo last commit | `git reset --soft HEAD~1` | Undo a commit but keep the changes staged |
 | Discard a file | `git checkout -- <file>` | Throw away a file's uncommitted changes |
 
-**Gotcha:** avoid plain `git push --force` (can overwrite teammates' work). Use `git push --force-with-lease` — it refuses if the remote changed since you last fetched.
+**Watch out:** avoid plain `git push --force` (can overwrite teammates' work). Use `git push --force-with-lease` — it refuses if the remote changed since you last fetched.
 
 ```mermaid
 graph LR
@@ -1156,7 +1628,7 @@ FROM {{ ref('stg_orders') }}
 
 **This is permanent code** (not a one-off script): the macro lives in `macros/` and is reused, and every `dbt run` executes the metadata query automatically. `require_partition_filter=true` makes dbt error if the partition filter is ever forgotten.
 
-**Gotcha:** use the **ingestion timestamp** (`ingested_at`), not a business-time column, and always add a lookback window so late rows aren't missed.
+**Watch out:** use the **ingestion timestamp** (`ingested_at`), not a business-time column, and always add a lookback window so late rows aren't missed.
 
 ### 5.8 SQL conventions (SQLFluff style)
 
