@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dbt *)",
+      "Bash(sqlfluff lint *)",
+      "Bash(sqlfluff fix *)",
+      "Bash(yamllint *)",
+      "Bash(pre-commit run *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git status)",
+      "Bash(git branch *)",
+      "Bash(find dbt/ *)",
+      "Bash(grep * dbt/)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)"
+    ]
+  }
+}
