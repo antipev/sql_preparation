@@ -1,4 +1,4 @@
-# 3. SQL PLAYBOOK — BigQuery → Redshift → Snowflake
+# SQL PLAYBOOK — BigQuery → Redshift → Snowflake
 
 > My SQL playbook for the **Lead Analytics Engineer** 90-min technical round.
 > Every pattern shows **BigQuery**, **Redshift**, and **Snowflake** equivalents, ordered **simple → medium → hard**.
@@ -294,6 +294,114 @@ QUALIFY rnk <= 3;
 
 *(Alice and Bob tie for 1st, so the next rank is 3 — Carol is still in the top 3)*
 
+---
+PRACTICE
+`Find the three most expensive products in each category of our products catalog, with each one's price and its position within the category. Our storefront shows exactly three per category, so when two products share a price, the one with the lower product_id takes the higher spot.`
+
+```sql
+WITH ranked_products AS (
+  SELECT
+    category,
+    product_id,
+    product_name,
+    price,
+    ROW_NUMBER() OVER (
+      PARTITION BY category
+      ORDER BY price DESC, product_id
+    ) AS price_rank
+  FROM products
+)
+SELECT
+  category,
+  product_id,
+  product_name,
+  price,
+  price_rank
+FROM ranked_products
+WHERE price_rank <= 3
+```
+
+PRACTICE
+`Our support agents keep answering tickets blind, because a customer's full purchase history in transactions is too long to read before every reply. Show them only each customer's two latest purchases, customer by customer and newest first, and never more than two even when purchases share a timestamp: the higher transaction id counts as the later purchase.`
+---
+```sql
+WITH ranked_purchases AS (
+  SELECT
+    user_id,
+    transaction_id,
+    transaction_date,
+    total_amount,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id
+      ORDER BY transaction_date DESC, transaction_id DESC
+    ) AS purchase_recency
+  FROM transactions
+)
+SELECT
+  user_id,
+  transaction_id,
+  transaction_date,
+  total_amount,
+  purchase_recency
+FROM ranked_purchases
+WHERE purchase_recency <= 2
+ORDER BY user_id, purchase_recency
+```
+
+PRACTICE
+`Some owners' API tokens were never used and others share a last-used timestamp, yet the support reviewer's account screen must show each owner the same tokens on every load, with never-used ones only filling slots the used ones leave open. From api_tokens, list each owner's three most recently used tokens with their position, a tie going to the higher token_id.`
+
+```sql
+WITH data AS(
+
+SELECT
+ owner_id,
+ token_id,
+ last_used,
+ ROW_NUMBER() OVER (
+  PARTITION BY owner_id
+  ORDER BY last_used::DATETIME DESC NULLS LAST, token_id DESC)
+ AS recency_position
+FROM api_tokens
+
+)
+
+SELECT
+ owner_id,
+ token_id,
+ last_used::DATETIME AS last_used,
+ recency_position
+FROM data
+WHERE recency_position<=3
+```
+
+PRACTICE
+`Our creator pages show each creator's three latest items from content_items in creator order, newest-to-oldest per creator, with same-day publishes sorted by higher content_id for deterministic refreshes. Items without a publish date appear only behind dated items, filling shelves that would otherwise be short of three.`
+
+
+```sql
+WITH data AS (
+SELECT
+  creator_id,
+  content_id,
+  title,
+  publish_date::DATETIME AS publish_date,
+  ROW_NUMBER() OVER (
+  PARTITION BY creator_id
+  ORDER BY publish_date DESC NULLS LAST, content_id DESC
+  )
+  AS shelf_position
+FROM content_items
+WHERE creator_id IS NOT NULL
+)
+SELECT
+ *
+FROM data
+WHERE shelf_position<=3
+```
+
+
+
 
 
 ### 2.2 LAG / LEAD (compare to previous / next)
@@ -346,6 +454,325 @@ WHERE streams > prev_streams;
 **Watch out:** `LAG/LEAD` need a deterministic `ORDER BY`; otherwise rows are unordered and the result is wrong.
 
 
+---
+PRACTICE
+
+`A month in which a plan signs up nobody is still a month: it belongs on the trend as a zero, and the month after it has no baseline to grow from. Using app_users, the subscriptions lead wants each paid plan's monthly new subscriber count spanning every month from when any plan first had a paid signup through the most recent, plus the month-over-month percent change, ordered by plan and month.`
+
+```sql
+WITH RECURSIVE date_spine AS (
+  SELECT 
+    DATE_TRUNC('month', MIN(subscriber_since))::date AS month_start
+  FROM app_users
+  WHERE plan <> 'trial'
+  
+  UNION ALL
+  
+  SELECT 
+    (month_start + INTERVAL '1 month')::date
+  FROM date_spine
+  WHERE month_start < (SELECT DATE_TRUNC('month', MAX(subscriber_since))::date FROM app_users)
+  
+  
+), dates AS (
+ 
+ SELECT 
+   a.month_start,
+   b.plan
+ FROM date_spine AS a
+ CROSS JOIN (SELECT plan FROM app_users WHERE plan <> 'trial' GROUP BY 1) AS b
+
+), source AS (
+
+SELECT
+  plan,
+  DATE_TRUNC('month',subscriber_since::date) AS subscriber_since_month,
+  COUNT(user_id) AS new_subscribers
+FROM app_users
+WHERE plan <> 'trial'
+GROUP BY 1,2
+
+), calculations AS (
+SELECT
+  a.plan,
+  a.month_start,
+  COALESCE(b.new_subscribers, 0) AS new_subscribers
+FROM dates AS a
+LEFT JOIN source AS b ON a.plan=b.plan 
+                     AND a.month_start=b.subscriber_since_month
+
+
+), prev AS (
+
+SELECT
+  *,
+  LAG(new_subscribers,1) OVER (
+    PARTITION BY plan
+    ORDER BY month_start
+    ) AS prev_new_subscribers
+
+FROM calculations
+
+), pct_change AS (
+
+SELECT
+  *,
+  CASE WHEN prev_new_subscribers IS NULL OR prev_new_subscribers = 0 
+       THEN NULL
+       ELSE ROUND((new_subscribers - prev_new_subscribers) * 100.0 
+       / prev_new_subscribers, 1)
+  END
+  AS pct_change
+FROM prev
+
+)
+ SELECT
+   plan,
+   month_start AS signup_month,
+   new_subscribers,
+   pct_change
+ FROM pct_change
+ORDER BY plan, signup_month
+
+```
+THE SAME VERSION
+``` sql
+WITH RECURSIVE
+paid_signups AS (
+  SELECT plan,
+         strftime('%Y-%m', subscriber_since) AS signup_month
+  FROM app_users
+  WHERE plan <> 'trial'
+),
+monthly_signups AS (
+  SELECT plan,
+         signup_month,
+         COUNT(*) AS new_subscribers
+  FROM paid_signups
+  GROUP BY plan, signup_month
+),
+bounds AS (
+  SELECT MIN(signup_month) AS first_month,
+         MAX(signup_month) AS last_month
+  FROM paid_signups
+),
+month_spine (signup_month) AS (
+  SELECT first_month FROM bounds
+  UNION ALL
+  SELECT strftime('%Y-%m', date(month_spine.signup_month || '-01', '+1 month'))
+  FROM month_spine
+  JOIN bounds ON month_spine.signup_month < bounds.last_month
+),
+paid_plans AS (
+  SELECT DISTINCT plan
+  FROM paid_signups
+),
+plan_months AS (
+  SELECT paid_plans.plan,
+         month_spine.signup_month
+  FROM paid_plans
+  CROSS JOIN month_spine
+),
+filled_months AS (
+  SELECT plan_months.plan,
+         plan_months.signup_month,
+         COALESCE(monthly_signups.new_subscribers, 0) AS new_subscribers
+  FROM plan_months
+  LEFT JOIN monthly_signups
+    ON monthly_signups.plan = plan_months.plan
+   AND monthly_signups.signup_month = plan_months.signup_month
+),
+with_previous AS (
+  SELECT plan,
+         signup_month,
+         new_subscribers,
+         LAG(new_subscribers) OVER (PARTITION BY plan ORDER BY signup_month) AS prev_subscribers
+  FROM filled_months
+)
+SELECT plan,
+       signup_month,
+       new_subscribers,
+       ROUND((new_subscribers - prev_subscribers) * 100.0 / prev_subscribers, 1) AS pct_change
+FROM with_previous
+ORDER BY plan, signup_month
+```
+
+PRACTICE
+`A month in which a category sold nothing still belongs on the trend as zero revenue, and growth measured from a zero month is left blank: dropping the empty month is how a March shows +200% against January. Across the twelve months of 2026, report each product category's revenue from store_sales_raw and its growth over the previous month of that year, as a percentage rounded to one decimal.`
+
+```sql
+WITH RECURSIVE
+  source AS (
+
+-- growth round 1 decimal
+-- category
+-- momth
+-- revenue
+SELECT
+  *,
+  DATE_TRUNC('month',sale_date::DATE) AS sale_month
+FROM store_sales_raw
+
+), sales_by_category_by_month AS (
+
+SELECT
+  sale_month,
+  product_category,
+  SUM(revenue) AS revenue
+FROM source
+GROUP BY 1,2
+  
+), category AS (
+
+SELECT
+  product_category
+FROM source
+GROUP BY 1
+
+), months AS (
+
+SELECT
+  MIN(sale_month) AS sale_month
+FROM source
+UNION ALL
+SELECT
+  (sale_month + INTERVAL '1 month') AS sale_month
+FROM months
+WHERE sale_month <
+  (
+  SELECT
+  MAX(sale_month) AS sale_month
+  FROM source
+  )
+
+), months_category AS (
+
+SELECT
+  a.sale_month,
+  b.product_category
+FROM months AS a
+CROSS JOIN category AS b
+
+), sales_by_category_by_month_full AS (
+SELECT
+  a.sale_month,
+  a.product_category,
+  COALESCE(b.revenue,0) AS revenue
+FROM months_category                 AS a
+LEFT JOIN sales_by_category_by_month AS b
+ ON a.sale_month       = b.sale_month
+AND a.product_category = b.product_category
+
+), prev_sales_by_category_by_month_full AS (
+SELECT
+  sale_month,
+  product_category,
+  revenue,
+  LAG(revenue,1) OVER (
+  PARTITION BY product_category,DATE_TRUNC('year', sale_month)
+  -- over the previous month of that year
+  ORDER BY sale_month
+                      )
+  AS prev_revenue
+FROM sales_by_category_by_month_full
+
+), growth AS (
+ 
+SELECT
+  sale_month,
+  product_category,
+  revenue,
+  prev_revenue,
+  ROUND(
+  (100*(revenue-prev_revenue)/prev_revenue)
+  ,1) AS growth_pct
+FROM prev_sales_by_category_by_month_full 
+
+
+)
+SELECT
+  --*
+  product_category,
+  sale_month,
+  revenue,
+  growth_pct --growth_over_prev_month_of_current_year
+FROM growth
+  --months_category
+  --months
+  -- category 
+  --sales_by_category_by_month
+  --source
+
+```
+```sql
+WITH calendar(sale_month) AS (
+    SELECT '2026-01' UNION ALL
+    SELECT '2026-02' UNION ALL
+    SELECT '2026-03' UNION ALL
+    SELECT '2026-04' UNION ALL
+    SELECT '2026-05' UNION ALL
+    SELECT '2026-06' UNION ALL
+    SELECT '2026-07' UNION ALL
+    SELECT '2026-08' UNION ALL
+    SELECT '2026-09' UNION ALL
+    SELECT '2026-10' UNION ALL
+    SELECT '2026-11' UNION ALL
+    SELECT '2026-12'
+),
+categories AS (
+    SELECT DISTINCT product_category
+    FROM store_sales_raw
+),
+monthly_sales AS (
+    SELECT
+        product_category,
+        strftime('%Y-%m', sale_date) AS sale_month,
+        SUM(revenue) AS month_revenue
+    FROM store_sales_raw
+    GROUP BY product_category, sale_month
+),
+category_months AS (
+    SELECT
+        categories.product_category,
+        calendar.sale_month,
+        COALESCE(monthly_sales.month_revenue, 0) AS revenue
+    FROM categories
+    CROSS JOIN calendar
+    LEFT JOIN monthly_sales
+        ON monthly_sales.product_category = categories.product_category
+       AND monthly_sales.sale_month = calendar.sale_month
+),
+with_prior AS (
+    SELECT
+        product_category,
+        sale_month,
+        revenue,
+        LAG(revenue) OVER (
+            PARTITION BY product_category
+            ORDER BY sale_month
+        ) AS prior_revenue
+    FROM category_months
+)
+SELECT
+    product_category,
+    sale_month,
+    revenue,
+    CASE
+        WHEN prior_revenue = 0 THEN NULL
+        ELSE ROUND(100.0 * (revenue - prior_revenue) / prior_revenue, 1)
+    END AS growth_pct
+FROM with_prior
+```
+
+
+---
+
+
+
+
+
+
+
 ### 2.3 Running totals & moving averages
 
 **What it is:** cumulative sums / rolling averages over a time series. Signal words: **"rolling", "cumulative", "moving average"**.
@@ -378,6 +805,51 @@ FROM daily_revenue;
 *(the 7-day window only fills completely from 2024-01-07; earlier rows average just the rows available — e.g. 2024-01-07 = (100+150+200+50+120+180+90) ÷ 7 = 127.14)*
 
 **Watch out:** use `ROWS BETWEEN … PRECEDING AND CURRENT ROW` (not `RANGE`) for a *fixed number of rows*; `RANGE` groups ties and can give wrong rolling counts.
+
+
+---
+PRACTICE
+As of each sale in store_sales_raw, how many units has its product category sold so far, that sale included? Sales in the same category on the same day are counted one at a time in sale id order rather than all landing together.
+
+```sql
+SELECT
+  sale_id,
+  product_category,
+  sale_date,
+  qty,
+  SUM(qty) OVER (
+    PARTITION BY product_category
+    ORDER BY sale_date, sale_id -- That second key is not decoration: it is the only thing that tells the engine which same-day sale happened first.
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS units_sold_to_date
+FROM store_sales_raw
+```
+
+PRACTICE
+`Our settlement ledger shows one identical balance on every payment that cleared on the same settlement_day, so we can't tell which payment in a batch tipped us over. Rebuild it from payments: the cumulative settled amount as of each individual payment, with payments that share a day applied in txn_id order.`
+
+`This is a running total. The difficulty is that the time key is not unique. Settlements post in batches, so several payments share a settlement_day, and the textbook SUM(amount) OVER (ORDER BY settlement_day) quietly uses the default frame, which is RANGE. RANGE treats every row with the same settlement_day as one peer group, so each payment in a batch gets the balance after the whole batch. That is exactly the symptom in the prompt: identical balances across a day, and no way to see which payment crossed the line. The query runs cleanly, the numbers look plausible, and they are wrong on every tied row except the last one in each batch.`
+
+```sql
+SELECT
+  txn_id,
+  settlement_day,
+  amount,
+  SUM(amount) OVER (
+    ORDER BY settlement_day, txn_id
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS running_settled
+FROM payments
+```
+
+---
+
+
+
+
+
+
+
 
 
 ### 2.4 Top-N per group
@@ -1852,12 +2324,3 @@ graph LR
 10. **Schedule runs** — hourly/daily prod jobs with SLAs and freshness expectations.
 
 ![dbt model deployment](dbt-model-deployment.jpg)
-
-
-
-
-
-
-
-
-
