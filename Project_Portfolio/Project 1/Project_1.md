@@ -94,7 +94,7 @@ flowchart LR
 
 **2.2 The first requirements.**
 1. Consume the parquet files that TopSort provides, from internal S3.
-2. Convert timestamps from UTC to each partner's local timezone.
+
 
 **2.3 How the scope grew.** The design changed several times as the project went on:
 
