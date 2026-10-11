@@ -507,8 +507,8 @@ flowchart TB
 | Stream ingestion | Continuous copy of the restaurant application's promotion and campaign data, extended with 12 tables | [A.2](#a2-stream-ingestion) |
 | Transformation (dbt) | Deduplicate, clean and enrich the data, keep the customer segment history, and expose linked reporting tables | [A.3](#a3-transformation-in-dbt) |
 | Transformation (legacy system, for egress) | SQL queries by the BI analysts that shape the files for the restaurant portal and TopSort | [A.4](#a4-transformation-in-the-legacy-system) |
-| Data egress | built and owned by the BI analysts; I advised on sources, schedules and filter windows | [A.5](#a5-data-egress) |
-| Semantic layer (prototype) | prototype on a sandbox Cloud Run, work in progress due to infrastructure challenges | [A.6](#a6-semantic-layer-prototype) |
+| Data egress | Built and owned by the BI analysts; I advised on sources, schedules and filter windows | [A.5](#a5-data-egress) |
+| Semantic layer (prototype) | Prototype on a sandbox Cloud Run, work in progress due to infrastructure challenges | [A.6](#a6-semantic-layer-prototype) |
 
 ---
 
@@ -532,7 +532,7 @@ The cycle keeps running: restaurants spend more marketing budget, which brings e
 |---|---|
 | A campaign performance dashboard in the Partners' Portal | ✅ restaurants see their campaign metrics in the portal. |
 | Automated syncs, so the data is always available | ✅ the pipelines run daily, and catch up on their own after a missed run. |
-| Times shown in the partner's local timezone | ✅ local timestamps are carried through every layer next to the UTC ones. |
+| Reporting layer is built for Analytical needs | ✅ Tables are named with "business entity", have relationship keys, connected via bridge, metrics are built in Semantic layer (prototype) for Analyst queries and MCP for agent queries. |
 
 The way of getting the data changed on the way, from files delivered by TopSort to extraction from TopSort's Snowflake, but the objectives did not.
 
