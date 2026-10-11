@@ -681,7 +681,7 @@ flowchart TB
 
 **What it does:** it continuously copies the restaurant application's promotion and campaign data into BigQuery, so it can be combined with TopSort's reporting data. Batch ingestion brings the ad results in. This stream brings in what the restaurant application itself knows: which campaigns, vendors, budgets and promotions exist, and the campaign metrics shown to partners.
 
-**Technology:** Google Cloud Datastream, a change-data-capture service. It reads the change log of the application's MySQL database and writes every change to BigQuery in append-only mode, so history is kept and nothing is overwritten. The stream is defined in one YAML file in a shared repository, with these settings: data is at most 5 minutes old (`data_freshness: 300s`), existing rows are backfilled when a table is added, the stream starts in the running state, and failures alert a team channel.
+**Technology:** Google Cloud Datastream, a change-data-capture service. It reads the change log of the application's MySQL database and writes every change to BigQuery in append-only mode, so history is kept and nothing is overwritten. **The stream is defined in one YAML file in a shared repository**, with these settings: data is at most 5 minutes old (`data_freshness: 300s`), existing rows are backfilled when a table is added, the stream starts in the running state, and failures alert a team channel.
 
 ```mermaid
 flowchart LR
@@ -693,15 +693,16 @@ flowchart LR
     class A,B,C,D skip
 ```
 
-**What I changed.** I did not build this stream. The restaurant portal team asked me to ingest several related tables. Before starting, I researched how this had been done before and found that this stream already existed and was owned by the domain team that owns the restaurant promotion pipelines globally. I extended it with a small pull request: in July 2026, before the launch, I added 12 tables (see [Decision 3](#decision-3)):
+**What I changed.** The restaurant portal team asked me to ingest several related tables. Before starting, I researched how this had been done before and found that this stream already existed from the same source and was owned by the Global Sales team. I extended the stream with a small pull request: I added 12 tables in July 2026, before the launch in Canada (see [Decision 3](#decision-3)):
 - campaign setup: the corporate campaign, its restaurants and promotions, and the vendors;
 - sponsored ad and its budget;
 - the campaign metrics tables (hourly, daily, weekly, monthly);
 - partner credits.
 
-The campaign metrics tables hold numbers calculated by the egress job (see [A.5](#a5-data-egress)) and written to the restaurant application. The restaurant team asked for them to be brought back into BigQuery. It was later confirmed that this data was redundant, but at the time it was the request.
+(The campaign metrics tables hold numbers calculated previously via Topsort Batchingestion and Data tranfromation and delivered via the egress job (see [A.5](#a5-data-egress)) and written to the restaurant application. The restaurant team asked for them to be brought back into BigQuery. It was later confirmed that this data was redundant, but at the time it was the request).
 
 **Why it matters for the design.** Because the stream is append-only, a row can arrive many times as it changes. The dbt layer must therefore deduplicate it before use (see [A.3](#a3-transformation-in-dbt)).
+
 
 ## A.3 Transformation in dbt
 
@@ -734,11 +735,11 @@ seeds/ and tests/            test data and data tests
 
 ```mermaid
 flowchart LR
-    A[("Raw tables<br/>from ingestion")] --> B["Deduplicate<br/>keep the latest copy of each row"]
-    B --> C["Clean<br/>rename, type, keep local time,<br/>rebuild the last 14 days"]
-    C --> D["Enrich<br/>add customer segment on the purchase date,<br/>campaign type"]
-    D --> E[("Reporting tables<br/>one per subject")]
-    E --> F["Bridge<br/>one view that links them all"]
+    A[("Raw tables<br/>from ingestion")] --> B["Staging:Deduplicate<br/>keep the latest copy of each row"]
+    B --> C["Staging:Clean<br/>rename, type, keep local time,<br/>rebuild the last 14 days"]
+    C --> D["Intermediate:Enrich<br/>add customer segment on the purchase date,<br/>campaign type"]
+    D --> E[("Mart:Reporting tables<br/>one per subject")]
+    E --> F["Mart:Bridge<br/>one view that links them all"]
 
     classDef skip fill:#F28C38,stroke:#B35F12,color:#000
     class A,B,C,D,E,F skip
@@ -746,16 +747,16 @@ flowchart LR
 
 | Layer | What happens | Why |
 |---|---|---|
-| Deduplicate | Keeps the most recently ingested copy of each row. | Both the stream (append-only) and the batch pipeline (which re-loads a window) can deliver the same row more than once. |
-| Clean | Renames and types the columns. Keeps both UTC and local timestamps. Converts the money values, which arrive as text in dollars, to numbers in cents. Rebuilds only the last 14 days, partition by partition. | Cost and speed: old days are not rebuilt. 14 days covers the 13-day lookback of the ingestion, plus one day. |
-| Enrich | Adds the customer segment that was valid on the day of the purchase (returning, winback or Skip Plus, using the valid-from and valid-to dates), and the campaign type (corporate or individual). | Ad performance can then be split by customer type as it was at the moment of purchase. |
-| Reporting tables and bridge | One table per subject, plus a bridge view that links every table through shared keys. | It fixes double-counting, because joining tables directly can duplicate rows and break totals. It also gives one standard way to join, so every report matches. This follows the *Unified Star Schema* idea. |
+| Staging:Deduplicate | Keeps the most recently ingested copy of each row. | Both the stream (append-only) and the batch pipeline (which re-loads a window) can deliver the same row more than once. |
+| Staging:Clean | Renames and types the columns. Keeps both UTC and local timestamps. Converts the money values, which arrive as text in dollars, to numbers in cents. Rebuilds only the last 14 days, partition by partition. | Cost and speed: old days are not rebuilt. 14 days covers the 13-day lookback of the ingestion, plus one day. |
+| Intermediate:Enrich | Adds the customer segment that was valid on the day of the purchase (returning, winback or Skip Plus, using the valid-from and valid-to dates), and the campaign type (corporate or individual). | Ad performance can then be split by customer type as it was at the moment of purchase. |
+| Mart:Reporting tables and bridge | One table per subject, plus a bridge view that links every table through shared keys. | It fixes double-counting, because joining tables directly can duplicate rows and break totals. It also gives one standard way to join, so every report matches. This follows the *Unified Star Schema* idea. |
 
-**Materialization.** The restaurant promotion models are views, the TopSort models are incremental (only recent days are rebuilt, for cost), and the reporting tables are tables in the reporting dataset.
+**Materialization.** The `restaurant promotion` models are views, the `TopSort models` are incremental (only recent days are rebuilt, for cost), and the reporting tables are tables in the reporting dataset.
 
 **Metrics exposed.** Revenue (promoted sales), orders, ad spend, impressions, charged clicks, click-through rate, conversion, cost per order, cost per click, return on ad spend, average order value, and new, returning, winback and Skip Plus customers. They are defined once in the semantic layer prototype (see [A.6](#a6-semantic-layer-prototype)).
 
-**Local time.** The source tables already carry the local timestamps (hour and purchase time in the partner's local time) next to the UTC ones, and the models pass both through. This covers the original requirement to show times in the partner's local timezone.
+**Local time.** The source tables already carry the local timestamps (hour and purchase time in the partner's local time) next to the UTC ones, and the models pass both through. 
 
 **Daily run order (UTC).** I chose these times myself, based on when TopSort refreshes its data and how long each step takes. Each step starts after the one before it, so the reporting tables never use half-updated inputs:
 
