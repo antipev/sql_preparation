@@ -522,7 +522,7 @@ flowchart TB
 | Reach and response | Impressions, charged clicks, click-through rate, conversion, orders |
 | Who bought | New, returning, winback and Skip Plus customers |
 
-The cycle keeps running: restaurants spend more marketing budget, which brings extra revenue to Skip and TopSort, and they spend it more wisely, for example by promoting specific dishes and meals. The system is running and generating additional income for the company.
+**The cycle keeps running**: restaurants spend more marketing budget, which brings extra revenue to Skip and TopSort, and they spend it more wisely, for example by promoting specific dishes and meals. The system is running and generating additional income for the company.
 
 **Scale, without business numbers.** One daily batch pipeline loads four TopSort tables. One existing stream was extended with 12 tables. Four daily dbt jobs build nine linked reporting tables and a bridge, plus a customer segment history table. Ten decisions in this document shaped the design, and a semantic layer prototype sits on top.
 
@@ -578,7 +578,10 @@ Each deep dive follows the same pattern: **What it does → How it works (verifi
 
 **Schedule:** every day at 06:00 UTC. I verified the loaded BigQuery data against Snowflake, and checked the time at which TopSort refreshes its data (in UTC), before fixing this schedule.
 
-**Repository layout (conceptual).** One folder per source, driven by configuration. Adding a table means one entry in the table list, one SQL file and one schema file:
+**Repository layout (conceptual).** One folder per source, driven by configuration. Adding a table means:
+- one entry in the table list, 
+- one SQL file 
+- and one schema file:
 
 ```text
 topsort pipeline/
@@ -589,9 +592,12 @@ topsort pipeline/
 └── schemas/             BigQuery schema per table
 ```
 
-**Technology:** Apache Airflow runs the job. Data moves from Snowflake to Google Cloud Storage as compressed JSON files, and then into BigQuery. The SQL queries and the whole DAG are my work. A small custom operator that reads from Snowflake and writes to Cloud Storage was built by the platform's batch-ingestion team.
+**Technology:** Apache Airflow runs the job. Data moves from Snowflake to Google Cloud Storage as compressed JSON files, where they are converted into newline-delimited JSONL format before being loaded into BigQuery. The SQL queries and the whole DAG are my work. A small custom operator that reads from Snowflake and writes to Cloud Storage was built by the platform's batch-ingestion team.
 
-**Where the work runs.** Airflow is the scheduler: it decides *what* runs and *when*. The actual work runs on Kubernetes, a system that starts a small, short-lived container (a "pod") for each task, gives it a fixed amount of CPU and memory, and removes it when the task finishes. Each daily run therefore starts pods that extract from Snowflake, write the files to Cloud Storage, and load them into BigQuery. Nobody keeps a server running between runs.
+    **Standard JSON** is a single object or array enclosed in brackets/braces (requiring the whole file to be loaded at once). 
+    **JSONL** consists of multiple independent JSON objects, each separated by a newline character. JSONL is optimized for line-by-line streaming, making it much easier to process massive files incrementally or in parallel without parsing the entire file into memory.
+
+**Where the work runs.** Airflow is the scheduler: it decides *what* runs and *when*. The actual work runs on Kubernetes, a system that starts a small, short-lived container (a "pod") for each task, gives it a fixed amount of CPU and memory, and removes it when the task finishes. Each daily run therefore starts "pods" that extract from Snowflake, write the files to Cloud Storage, and load them into BigQuery. Nobody keeps a server running between runs.
 
 ```mermaid
 flowchart LR
@@ -601,10 +607,10 @@ flowchart LR
     D -->|start point for<br/>the next run<br/>self-healing| A
 ```
 
-**The problem with the first version.** The first version (a prototype from another team) re-loaded a fixed window of recent days every run. That is simple, but it cannot tell when TopSort changes old rows or delivers data late. I considered reusing that approach as it was (not reinventing the wheel) and chose the watermark instead.
+**The problem with the first version.** The first version (a prototype from another Data team) **re-loaded a fixed window of recent days every run. That is simple, but it cannot tell when TopSort changes old rows or delivers data late, plus requres deduplication and transfromation pipeline. I considered reusing that approach as it was at first (not reinventing the wheel) and chose the watermark instead after.
 
 **My approach: a watermark with a lookback window.**
-- The *watermark* is the newest timestamp already in BigQuery. Each run asks Snowflake only for rows newer than that.
+- The *watermark* is the newest timestamp (as date) already in BigQuery (as table with one column). **Each run asks Snowflake only for rows newer than that**.
 - The *lookback window* moves the start back by a few days, so recent rows are fetched again and replaced. This catches late and corrected data.
 
 | Table type | Lookback | Why |
@@ -615,15 +621,18 @@ flowchart LR
 
 **What the "window" is.** For each table, the start of the window is:
 
-> the newest timestamp of the *slowest active environment* already in BigQuery, minus the lookback days
+> the newest *watermark* of the *slowest active environment* (sandbox, stafing, production) already in BigQuery, minus the lookback days
 
-and the window has no end: it reaches up to the latest data in Snowflake. Example: if the slowest environment is loaded up to 20 June and the lookback is 13 days, the run fetches everything after 7 June.
+and the window has no end (to current datetime: UTC time can be tomorrow, while time in Canad be still today): it reaches up to the latest data in Snowflake. 
+
+Example: if the slowest environment (lets say "sandbox") is loaded up to 20 June and the lookback is 13 days, the run fetches everything after 7 June (no end in future). If one environment does not priduces any data - nothing fetched, nothing loaded.
+
 
 **Design decisions in this pipeline**
 
 1. **One watermark per environment.** The Snowflake tables hold records of several environments (sandbox, staging and production) side by side, told apart by a marketplace ID. While we tested in staging and sandbox, those environments received new records at different times. A single global newest timestamp would have skipped records of any environment that was behind, so each environment gets its own newest timestamp and I use the *oldest* of them as the start point. After go-live only production received new records, and the other environments stopped. Their old timestamps would have pulled the start point back by months and forced a huge re-read on every run, so environments with no data for 30 days (and rows with no ID) are ignored.
 2. **Self-healing.** The start point is always read from what is *already in BigQuery*, not from a calendar. If the DAG does not run for a few days (an outage, a pause, a failure), the next run starts from where the data stopped and catches up in one go. Nothing has to be re-run by hand.
-3. **Delete the overlap, then append.** Before loading, the overlapping window is deleted from BigQuery and the fresh rows are appended. Re-running the job never creates duplicates.
+3. **Delete the overlap, then append.** Before loading, **the overlapping window is deleted from BigQuery** and the fresh rows are appended. **Re-running the job never creates duplicates**.
 4. **No data loss by design.** See the next section.
 5. **Whole-table refresh for small reference data.** A very large lookback value (9,999 days) turns the same code into a full refresh. No second code path is needed.
 6. **No file, no change.** If Snowflake returns no rows, no file is written and BigQuery is left untouched.
@@ -645,10 +654,10 @@ The cost is a short period (minutes) in which the window is missing from BigQuer
 ```mermaid
 flowchart TB
     P["1-3. Prepare: create table if missing, compute the watermark per environment (oldest one minus lookback days), save it once in the helper table | SAFEGUARD 1: one shared boundary"]
-    E["4. Extract rows newer than the watermark from Snowflake to Cloud Storage"]
+    E["4. Extract rows newer than the watermark (minus lookback days) from Snowflake to Cloud Storage"]
     Q{"Any rows returned?"}
     SK["Stop: no file, nothing deleted | SAFEGUARD 2"]
-    D["5-6. Confirm the file exists in Cloud Storage | SAFEGUARD 3, then delete the overlap window in BigQuery using the same watermark"]
+    D["5-6. Confirm the file exists in Cloud Storage | SAFEGUARD 3, then delete the overlap window in BigQuery using the same watermark (minus lookback days)"]
     L["7. Load the file into BigQuery | SAFEGUARD 4: all or nothing"]
     OK{"Load succeeded?"}
     RT["Retry up to 2 times from the same file | SAFEGUARD 5"]
