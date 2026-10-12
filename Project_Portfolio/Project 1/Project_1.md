@@ -662,7 +662,7 @@ The cost is a short period (minutes) in which the window is missing from BigQuer
 
 ```mermaid
 flowchart TB
-    P["1-3. Prepare: create table if missing, compute the watermark per environment (oldest one minus lookback days), save it once in the helper table | SAFEGUARD 1: one shared boundary"]
+    P["1-3. Prepare: create table if missing, compute the watermark per environment, save it once in the helper table | SAFEGUARD 1: one shared boundary"]
     E["4. Extract rows newer than the watermark (minus lookback days) from Snowflake to Cloud Storage"]
     Q{"Any rows returned?"}
     SK["Stop: no file, nothing deleted | SAFEGUARD 2"]
