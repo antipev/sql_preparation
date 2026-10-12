@@ -496,7 +496,7 @@ flowchart TB
 | Aug 2026 | The BI analysts' egress queries switch to my segment history table | The more trusted source is used in both directions. | [A.4](#a4-transformation-in-the-legacy-system) |
 | After launch | A linked reporting layer, with shared keys and a bridge | One data product, joined without custom queries. | [Decision 6](#decision-6) |
 | After launch | A semantic layer prototype | Experimentation toward self-service and AI access. Still a prototype in a sandbox. | [Decision 7](#decision-7), [A.6](#a6-semantic-layer-prototype) |
-| Recently | Discussion on moving the reporting to Pacific time | I advised keeping UTC and asking TopSort to support time zones in its budget distribution. TopSort agreed to implement it. | [Decision 8](#decision-8) |
+| Recently | Discussion on moving the reporting to Pacific time | **I advised keeping UTC and asking TopSort to support time zones in its budget distribution. TopSort agreed to implement it**. | [Decision 8](#decision-8) |
 | Sep 2026 | Documentation of the data products | Product pages, architecture diagram and this document. | |
 
 ### 3.3 Components (each is a deep dive)
