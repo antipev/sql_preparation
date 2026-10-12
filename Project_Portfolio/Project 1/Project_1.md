@@ -765,9 +765,11 @@ flowchart LR
 **Materialization.** The `restaurant promotion` models are mostly views, the `TopSort models` are incremental (only recent days are rebuilt, for cost), and the reporting tables are tables in the reporting dataset.
 
 Examples of materialization from `restaurant promotion` stream:
+
 **changelog table (mart)**
-- When no dates passed: on every daily run it looks back over a 30-day window and overwrites those day-partitions
-- When dates passed: It uses the specified start date (shifted back by the 30-day default/specified healing window) up to the end date, overwriting only the day-partitions within that custom range.
+> When no dates passed: on every daily run it looks back over a 30-day window and overwrites those day-partitions
+> When dates passed: It uses the specified start date (shifted back by the 30-day default/specified healing window) up to the end date, overwriting only the day-partitions within that custom range.
+
 ```text
 {#
   window_start_date        — optional run parameter passed by the orchestrator (e.g. '2026-08-01').
@@ -806,7 +808,8 @@ Examples of materialization from `restaurant promotion` stream:
 ```
 
 **campaingn table (mart)**
-- Full Table Refresh (`materialized='table'`): Completely drops and rebuilds the table from scratch on every run to prevent missing backfilled CDC events, remaining cost-neutral at current data volumes.
+
+> Full Table Refresh (`materialized='table'`): Completely drops and rebuilds the table from scratch on every run to prevent missing backfilled CDC events, remaining cost-neutral at current data volumes.
 
 ```text
 {#
@@ -831,7 +834,8 @@ Examples of materialization from `restaurant promotion` stream:
 Examples of materialization from `Topsort` ingestion:
 
 **scored table (mart)**
-- View (materialized='view'): Computes results dynamically on every query without storing physical data, ensuring the data is always fresh and up-to-date.
+
+> View (materialized='view'): Computes results dynamically on every query without storing physical data, ensuring the data is always fresh and up-to-date.
 
 ```text
 {{ config(
@@ -842,7 +846,8 @@ Examples of materialization from `Topsort` ingestion:
 ```
 
 **scored table (inter)**
-- Incremental Insert-Overwrite (materialized='incremental'): Completely overwrites entire day-partitions based on the day_utc values present in the incoming data.
+
+> Incremental Insert-Overwrite (materialized='incremental'): Completely overwrites entire day-partitions based on the day_utc values present in the incoming data.
 
 ```text
 {{
