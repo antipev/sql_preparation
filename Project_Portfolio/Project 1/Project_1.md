@@ -632,9 +632,9 @@ flowchart LR
 
 > the newest *watermark* of the *slowest active environment* (sandbox, stafing, production) already in BigQuery, minus the lookback days
 
-and the window has no end (to current datetime: UTC time can be tomorrow, while time in Canad be still today): it reaches up to the latest data in Snowflake. 
+and the window has no end (to current datetime: UTC time can be tomorrow, while time in Canada be still today): it reaches up to the latest data in Snowflake. 
 
-Example: if the slowest environment (lets say "sandbox") is loaded up to 20 June and the lookback is 13 days, the run fetches everything after 7 June (no end in future). If one environment does not priduces any data - nothing fetched, nothing loaded.
+Example: if the slowest environment (lets say "sandbox") is loaded up to 20 June and the lookback is 13 days, the run fetches everything after 7 June (no end in future). If one environment does not produce any data - nothing fetched, nothing loaded.
 
 
 **Design decisions in this pipeline**
