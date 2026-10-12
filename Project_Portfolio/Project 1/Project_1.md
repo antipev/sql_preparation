@@ -481,17 +481,17 @@ flowchart TB
 
 | When | Pivotal point | What it changed | Detail |
 |---|---|---|---|
-| Early 2026 | Design 1: TopSort's Reporting API delivers files to S3 | The starting plan. Decided without data engineers, never built. | |
-| Feb to Mar 2026 | Design 2: Skip data engineers load the S3 files into BigQuery | The company's standard pattern. Planned, never ran. | |
+| Early 2026 | `Design 1`: TopSort's Reporting API delivers files to S3 | The starting plan. Decided without data engineers, never built. | |
+| Feb to Mar 2026 | `Design 2`: Skip data engineers load the S3 files into BigQuery | The company's standard pattern. Planned, never ran. | |
 | Feb 2026 | Customer segments are sent to TopSort incrementally through the egress job | Put customer data in the data team's hands, without full control of the exchange. TopSort documents a different way. | [Decision 2](#decision-2) |
 | Apr 2026 | TopSort introduces Snowflake as its single source of truth | Skip must extract the data itself. This makes designs 1 and 2 obsolete. | [Decision 1](#decision-1) |
 | Early May 2026 | I join the project | The extraction becomes my responsibility. | |
-| May to Jun 2026 | I offered `Option 1` (**TopSort schedules the export itself: a Snowflake task writes the files straight to the S3 bucket**) and `Option 2` (**Extract programmatically with the batch ingestion platform, writing into two places: Cloud Storage (for BigQuery) and S3 directly at the same time**) for extracting turn out not to be available | Skip data engineering builds and owns the pipeline: a watermark with a lookback window. | [Decision 1](#decision-1), [A.1](#a1-batch-ingestion) |
-| Late May 2026 | Restaurant team asks for customers, purchases and amounts by segment | I push the join back to TopSort, which delivers the combined table (early July). Correctness is TopSort's. | [Decision 4](#decision-4) |
+| May to Jun 2026 | I offered `Option 1` (**TopSort schedules the export itself: a Snowflake task writes the files straight to the S3 bucket**) and `Option 2` (**Extract programmatically with the batch ingestion platform, writing into two places: Cloud Storage (for BigQuery) and S3 directly at the same time**) for extracting turn out not to be available | Skip data engineering builds and owns the pipeline: a watermark with a lookback window. `Design 3` | [Decision 1](#decision-1), [A.1](#a1-batch-ingestion) |
+| Late May 2026 | Restaurant team asks for customers, purchases and amounts by segment | **I push the join back to TopSort, which delivers the combined table (early July). Correctness is TopSort's responsibility**. | [Decision 4](#decision-4) |
 | Jun 2026 | I set up an agent-ready dbt project: folder structure, conventions in markdown files, and later automatic checks | Faster, more consistent development, especially of the properties files. | [Decision 10](#decision-10), [A.3](#a3-transformation-in-dbt) |
 | Late Jun 2026 | First sandbox test: the amounts arrive in dollars, not in cents | Money values are extracted as text and converted to cents later, two weeks before production. | [Decision 9](#decision-9) |
 | Jul 2026 | Restaurant portal team asks for related tables | I extend the existing stream with 12 tables and leave it with its owner. | [Decision 3](#decision-3), [A.2](#a2-stream-ingestion) |
-| Jul 2026, days before launch | TopSort cannot provide reliable customer segments | I build my own segment history table. TopSort's segments are replaced. | [Decision 5](#decision-5), [A.3](#a3-transformation-in-dbt) |
+| Jul 2026, days before launch | TopSort cannot provide reliable customer segments | **I build my own segment history table.** TopSort's segments are replaced. | [Decision 5](#decision-5), [A.3](#a3-transformation-in-dbt) |
 | Mid-Jul 2026 | **Launch**, on the planned date | The product team's integration goes live and campaigns can run. The data side was ready, which I made possible. | |
 | Aug 2026 | The BI analysts' egress queries switch to my segment history table | The more trusted source is used in both directions. | [A.4](#a4-transformation-in-the-legacy-system) |
 | After launch | A linked reporting layer, with shared keys and a bridge | One data product, joined without custom queries. | [Decision 6](#decision-6) |
