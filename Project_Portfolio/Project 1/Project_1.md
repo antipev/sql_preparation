@@ -951,6 +951,11 @@ flowchart LR
 
 **What the `/develop` skill does — the step that saves the most time.** A new staging model is the same repetitive checklist every time, so I saved it as one command. The skill is not a batch: it runs as a loop, and at each step the agent asks the developer a question, waits for the answer, performs that step, and only then moves to the next one — it never runs ahead on its own.
 
+> `Pareto principle` = "80% of users only touch 20% of the features"
+ => "build the small core of features first, prove it works, then iterate"
+ => "build only the first needed model/pipeline to make sure it works."
+
+
 ```mermaid
 flowchart LR
     subgraph DEV["/develop skill:<br/>scaffold a model, step by step"]
