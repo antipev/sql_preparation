@@ -955,8 +955,8 @@ flowchart LR
 flowchart LR
     A["1. Pull source<br/>metadata"] --> B["2. Confirm<br/>folder"] --> C["3. Write<br/>SQL"] --> D["4. Properties<br/>YAML + tests"] --> E["5. Run dbt,<br/>lint, pre-commit"] --> F["6. Report +<br/>docs, ERD"]
 
-    classDef skip fill:#F28C38,stroke:#B35F12,color:#000
-    class A,B,C,D,E,F skip
+    classDef hero fill:#2E7D32,stroke:#1B5E20,color:#fff
+    class A,B,C,D,E,F hero
 ```
 
 The six boxes above show **what** happens at each step. This loop is **how** each one gets done — the developer stays in control the whole way:
