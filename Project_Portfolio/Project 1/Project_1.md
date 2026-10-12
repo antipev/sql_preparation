@@ -616,7 +616,7 @@ flowchart LR
     D -->|start point for<br/>the next run<br/>self-healing| A
 ```
 
-**The problem with the first version.** The first version (a prototype from another Data team) **re-loaded a fixed window of recent days every run. That is simple, but it cannot tell when TopSort changes old rows or delivers data late, plus requres deduplication and transfromation pipeline. I considered reusing that approach as it was at first (not reinventing the wheel) and chose the watermark instead after.
+**The problem with the first version.** The first version (a prototype from another Data team) **re-loaded a fixed window of recent days every run. That is simple, but it cannot tell when TopSort changes old rows or delivers data late, plus requires deduplication and transfromation pipeline. I considered reusing that approach as it was at first (not reinventing the wheel) and chose the watermark instead after.
 
 **My approach: a watermark with a lookback window.**
 - The *watermark* is the newest timestamp (as date) already in BigQuery (as table with one column). **Each run asks Snowflake only for rows newer than that**.
