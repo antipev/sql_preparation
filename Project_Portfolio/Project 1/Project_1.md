@@ -757,12 +757,108 @@ flowchart LR
 
 | Layer | What happens | Why |
 |---|---|---|
-| Staging:Deduplicate | Keeps the most recently ingested copy of each row. | Both the stream (append-only) and the batch pipeline (which re-loads a window) can deliver the same row more than once. |
-| Staging:Clean | Renames and types the columns. Keeps both UTC and local timestamps. Converts the money values, which arrive as text in dollars, to numbers in cents. Rebuilds only the last 14 days, partition by partition. | Cost and speed: old days are not rebuilt. 14 days covers the 13-day lookback of the ingestion, plus one day. |
-| Intermediate:Enrich | Adds the customer segment that was valid on the day of the purchase (returning, winback or Skip Plus, using the valid-from and valid-to dates), and the campaign type (corporate or individual). | Ad performance can then be split by customer type as it was at the moment of purchase. |
+| Staging:Deduplicate | Keeps the most recently ingested copy of each row. | The stream (append-only) can deliver the same row more than once, the batch pipeline (which re-loads a window) is deduplicated at ingestion level. All are views |
+| Staging:Clean | Renames and types the columns. Keeps both UTC and local timestamps. Converts the money values, which arrive as text in dollars, to numbers in cents. Before Intermediate created: Rebuilds only the last 14 days, partition by partition. | Cost and speed: old days are not rebuilt. 14 days covers the 13-day lookback of the ingestion, plus one day. After intermedate: all converted to views only |
+| Intermediate:Enrich | Adds the customer segment that was valid on the day of the purchase (returning, winback or Skip Plus, using the valid-from and valid-to dates), and the campaign type (corporate or individual). | Ad performance can then be split by customer type as it was at the moment of purchase. Incremental tables with pattern desribed in previous step. |
 | Mart:Reporting tables and bridge | One table per subject, plus a bridge view that links every table through shared keys. | It fixes double-counting, because joining tables directly can duplicate rows and break totals. It also gives one standard way to join, so every report matches. This follows the *Unified Star Schema* idea. |
 
-**Materialization.** The `restaurant promotion` models are views, the `TopSort models` are incremental (only recent days are rebuilt, for cost), and the reporting tables are tables in the reporting dataset.
+**Materialization.** The `restaurant promotion` models are mostly views, the `TopSort models` are incremental (only recent days are rebuilt, for cost), and the reporting tables are tables in the reporting dataset.
+
+Example of incremental model from `restaurant promotion` stream:
+**changelog table (mart)**
+```text
+{#
+  window_start_date        — optional run parameter passed by the orchestrator (e.g. '2026-08-01').
+                             When absent (daily automated run), falls back to none and the model
+                             uses TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)) instead.
+  window_end_date          — optional upper bound for the processing window (e.g. '2026-09-01').
+                             Only applied when explicitly passed; omitted on daily runs (no upper bound).
+  auto_healing_window_days — number of days to subtract from window_start_date to catch
+                             late-arriving CDC events (campaigns can span many days).
+                             Defaults to 30 if not passed. Also used directly in DATE_SUB
+                             when no explicit window_start_date is provided.
+#}
+{% set window_start = var('window_start_date', '') | string | trim %}
+{# Parse window_start_date into a Python date object; resolves to none when not passed. #}
+{% set start_date = modules.datetime.datetime.strptime(window_start, '%Y-%m-%d') if window_start and window_start | lower != 'none' else none %}
+{# Shift the start back by the healing window so partitions with late CDC deliveries are reprocessed. #}
+{% set start_date_with_healing_window = (start_date - modules.datetime.timedelta(days=var('auto_healing_window_days', 30))).strftime('%Y-%m-%d') if start_date else none %}
+
+{{ config(
+    materialized='incremental',
+    incremental_strategy='insert_overwrite',
+    partition_by={
+        "field": "dwh_modified_timestamp",
+        "data_type": "timestamp",
+        "granularity": "day",
+        "copy_partitions": true
+    },
+    persist_docs={'relation': true, 'columns': true},
+    labels={'team': 'canadian-ae', 'table_tier': 'gold'},
+    cluster_by=['resto_promo_id'],
+    post_hook=[
+        "ALTER TABLE {{ this }} DROP PRIMARY KEY IF EXISTS",
+        "ALTER TABLE {{ this }} ADD PRIMARY KEY (_key_retail_media_campaign_changelog) NOT ENFORCED"
+    ]
+) }}
+```
+
+**campaingn table (mart)**
+```text
+{#
+  Full rebuild (table) chosen: int_restaurant_promotions_corp_campaign and
+  int_restaurant_promotions_sponsored_ad are views that scan the entire CDC event log on
+  every query. Incremental filtering on dwh_modified_timestamp would risk missing
+  backfilled rows with old source timestamps. A full refresh is cost-neutral at current
+  volumes and avoids that gap entirely.
+#}
+{{ config(
+    materialized='table',
+    persist_docs={'relation': true, 'columns': true},
+    labels={'team': 'canadian-ae', 'table_tier': 'gold'},
+    cluster_by=['id'],
+    post_hook=[
+        "ALTER TABLE {{ this }} DROP PRIMARY KEY IF EXISTS",
+        "ALTER TABLE {{ this }} ADD PRIMARY KEY (_key_retail_media_campaigns) NOT ENFORCED"
+    ]
+) }}
+```
+
+From Topsort stream:
+**scored table (mart)**
+
+```text
+{{ config(
+    materialized='view',
+    persist_docs={'relation': true, 'columns': true},
+    labels={'team': 'canadian-ae', 'table_tier': 'gold'}
+) }}
+```
+**scored table (inter)**
+
+```text
+{{
+    config(
+        materialized='incremental',
+        incremental_strategy='insert_overwrite',
+        partition_by={
+            "field": "day_utc",
+            "data_type": "date",
+            "granularity": "day"
+        },
+        cluster_by=[
+            'purchase_id',
+            'auction_id',
+            'string_campaign_id'
+        ],
+        post_hook=[
+            "ALTER TABLE {{ this }} DROP PRIMARY KEY IF EXISTS",
+            "ALTER TABLE {{ this }} ADD PRIMARY KEY (_key_scored_attribution_with_segment) NOT ENFORCED"
+        ]
+    )
+}}
+```
+
 
 **Metrics exposed.** Revenue (promoted sales), orders, ad spend, impressions, charged clicks, click-through rate, conversion, cost per order, cost per click, return on ad spend, average order value, and new, returning, winback and Skip Plus customers. They are defined once in the semantic layer prototype (see [A.6](#a6-semantic-layer-prototype)).
 
