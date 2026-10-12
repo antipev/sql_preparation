@@ -736,7 +736,8 @@ models/
     ├── restaurant promotions/
     │   ├── staging/         deduplicate, then clean
     │   └── intermediate/
-    └── reporting/           reporting tables and the bridge view
+    └── retail media/        
+        └── marts/           reporting tables and the bridge view
 seeds/ and tests/            test data and data tests
 ```
 
