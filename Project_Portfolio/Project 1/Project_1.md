@@ -585,9 +585,18 @@ Each deep dive follows the same pattern: **What it does → How it works (verifi
 
 ```text
 topsort pipeline/
-├── dag definition       one file that builds the tasks for every table
-├── schedule and defaults    schedule, retries, alerts
-├── table list           per table: SQL file, partition column, watermark column, lookback days
+├── dag definition json  one file that builds the tasks for every table + schedule, retries, alerts
+├── topsort json         one config for all tables: SQL file, partition column, watermark column, lookback days
+├── snowflake to bq py   one script with tasks:
+│   ├── create_table_if_not_exist
+│   ├── select_last_timestamp
+│   ├── get_last_timestamp
+│   ├── snowflake_to_gcs
+│   ├── sensor_gcs_files_exist
+│   ├── delete_overlapping_rows (conditional)
+│   ├── gcs_to_bq
+│   ├── post_ingest_watermark
+│   └── delete_gcs_file
 ├── sql/                 one extraction query per table
 └── schemas/             BigQuery schema per table
 ```
