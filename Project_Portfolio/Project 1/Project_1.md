@@ -688,7 +688,7 @@ flowchart TB
 
 [↑ Back to the summary](#summary)
 
-**What it does:** it continuously copies the restaurant application's promotion and campaign data into BigQuery, so it can be combined with TopSort's reporting data. Batch ingestion brings the ad results in. This stream brings in what the restaurant application itself knows: which campaigns, vendors, budgets and promotions exist, and the campaign metrics shown to partners.
+**What it does:** it continuously copies the restaurant application's promotion and campaign data into BigQuery, so it can be combined with TopSort's reporting data. Batch ingestion brings the ad results in. This stream brings in what the restaurant application itself knows: which `campaigns`, `vendors`, `budgets` and `promotions` exist, and the campaign metrics shown to partners.
 
 **Technology:** Google Cloud Datastream, a change-data-capture service. It reads the change log of the application's MySQL database and writes every change to BigQuery in append-only mode, so history is kept and nothing is overwritten. **The stream is defined in one YAML file in a shared repository**, with these settings: data is at most 5 minutes old (`data_freshness: 300s`), existing rows are backfilled when a table is added, the stream starts in the running state, and failures alert a team channel.
 
