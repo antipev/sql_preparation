@@ -1041,7 +1041,9 @@ The decisions behind these four steps, and how each is implemented:
 
 **Why a hand-written MERGE and not the dbt snapshot feature.** I had not used snapshots before, and I needed manual control of how the SQL runs.
 
-    **How it is wired into dbt.** The model uses a custom materialization called `raw_sql` — a Jinja macro that runs the model's SQL verbatim, with no automatic DDL — set at the domain level in `dbt_project.yml`:
+    **How it is wired into dbt.** The model uses a custom materialization called `raw_sql`
+    — a Jinja macro that runs the model's SQL verbatim, with no automatic DDL
+    — set at the domain level in `dbt_project.yml`:
 
     ```yaml
     customer_segmentation:
@@ -1049,7 +1051,9 @@ The decisions behind these four steps, and how each is implemented:
         +materialized: raw_sql
     ```
 
-    The model body is then plain BigQuery SQL: `CREATE TABLE IF NOT EXISTS` (`PARTITION BY`, `CLUSTER BY`), a `TEMP TABLE` that builds the daily timeline with `GENERATE_DATE_ARRAY`, and a two-branch `MERGE` that closes the open row and inserts the new one.
+    The model body is then plain BigQuery SQL: `CREATE TABLE IF NOT EXISTS` (`PARTITION BY`, `CLUSTER BY`), 
+    a `TEMP TABLE` that builds the daily timeline with `GENERATE_DATE_ARRAY`,
+    and a two-branch `MERGE` that closes the open row and inserts the new one.
 
 
 **Better source data.** The `legacy` segment queries read a BI-owned staging table of orders, built by a daily finance staging job, and in practice **it refreshed late (about 2 days), so recent orders were still not marked completed and customers were wrongly left out of segments**. They also worked in local time. 
