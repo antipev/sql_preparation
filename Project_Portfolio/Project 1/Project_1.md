@@ -965,13 +965,24 @@ The six boxes above show **what** happens at each step. This loop is **how** eac
 
 ```mermaid
 flowchart LR
-    Q["Agent asks<br/>a question"] --> A["Developer<br/>answers"] --> P["Agent performs<br/>the step"] --> Q
+    subgraph Explore["Explore"]
+        Q["Agent asks<br/>a question"] --> A["Developer<br/>answers"]
+    end
+    subgraph Plan["Plan"]
+        R["Agent researches<br/>/ plans"] --> RV["Developer<br/>reviews plan"]
+    end
+    subgraph Build["Build"]
+        P["Agent performs<br/>the step"] --> T["Developer reviews<br/>/ runs tests"]
+    end
+    A --> R
+    RV --> P
+    T --> Q
 
     classDef loop fill:#2E7D32,stroke:#1B5E20,color:#fff
-    class Q,A,P loop
+    class Q,A,R,RV,P,T loop
 ```
 
-Instead of hand-writing the dedup query, the incremental config, the YAML descriptions, the tests and the documentation, the developer runs `/develop <source> <entity>`, answers each question in turn, and reviews the result. The agent does the boilerplate; the developer keeps the judgement. The payoff is faster properties files (descriptions and tests), models that follow the same conventions every time, and fewer review comments.
+The three boxes above follow the **EPB** approach — **E**xplore, **P**lan, **B**uild: research and agree before writing, then build and verify. Instead of hand-writing the dedup query, the incremental config, the YAML descriptions, the tests and the documentation, the developer runs `/develop <source> <entity>`, answers each question in turn, and reviews the result. The agent does the boilerplate; the developer keeps the judgement. The payoff is faster properties files (descriptions and tests), models that follow the same conventions every time, and fewer review comments.
 
 **What it changed in practice.** It sped up the properties files significantly: test and column descriptions became much easier and faster to write. It also captured best practices through the iterations (see [Decision 10](#decision-10)).
 
