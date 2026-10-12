@@ -1041,6 +1041,16 @@ The decisions behind these four steps, and how each is implemented:
 
 **Why a hand-written MERGE and not the dbt snapshot feature.** I had not used snapshots before, and I needed manual control of how the SQL runs.
 
+**How it is wired into dbt.** The model uses a custom materialization called `raw_sql` — a Jinja macro that runs the model's SQL verbatim, with no automatic DDL — set at the domain level in `dbt_project.yml`:
+
+```yaml
+customer_segmentation:
+  staging:
+    +materialized: raw_sql
+```
+
+The model body is then plain BigQuery SQL: `CREATE TABLE IF NOT EXISTS` (`PARTITION BY`, `CLUSTER BY`), a `TEMP TABLE` that builds the daily timeline with `GENERATE_DATE_ARRAY`, and a two-branch `MERGE` that closes the open row and inserts the new one.
+
 **Better source data.** The `legacy` segment queries read a BI-owned staging table of orders, built by a daily finance staging job, and in practice it refreshed late (about 2 days), so recent orders were still not marked completed and customers were wrongly left out of segments. They also worked in local time. The `new` history table reads the order table of the company's core data warehouse, which is the organization's single source of truth and is refreshed often, keeps only orders with status completed, and uses UTC dates, as TopSort and Skip systems do.
 
 **Where it is used.** The dbt enrich layer replaces the segments provided by TopSort with this table, and the BI analysts' egress job later switched to it as its source, as a more trusted one (see [Decision 5](#decision-5)). A separate model keeps the Skip Plus membership periods, rebuilt in full on each run.
