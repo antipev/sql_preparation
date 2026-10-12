@@ -944,8 +944,32 @@ flowchart LR
     S["settings.json:<br/>allowed and denied commands"] -.-> A
 
     classDef skip fill:#F28C38,stroke:#B35F12,color:#000
-    class A,B,C,D,E,F,G,S skip
+    classDef hero fill:#2E7D32,stroke:#1B5E20,color:#fff
+    class A,B,C,D,F,G,S skip
+    class E hero
 ```
+
+**What the `/develop` skill does — the step that saves the most time.** A new staging model is the same repetitive checklist every time, so I saved it as one command. The skill is not a batch: it runs as a loop, and at each step the agent asks the developer a question, waits for the answer, performs that step, and only then moves to the next one — it never runs ahead on its own.
+
+```mermaid
+flowchart LR
+    A["1. Pull source<br/>metadata"] --> B["2. Confirm<br/>folder"] --> C["3. Write<br/>SQL"] --> D["4. Properties<br/>YAML + tests"] --> E["5. Run dbt,<br/>lint, pre-commit"] --> F["6. Report +<br/>docs, ERD"]
+
+    classDef skip fill:#F28C38,stroke:#B35F12,color:#000
+    class A,B,C,D,E,F skip
+```
+
+The six boxes above show **what** happens at each step. This loop is **how** each one gets done — the developer stays in control the whole way:
+
+```mermaid
+flowchart LR
+    Q["Agent asks<br/>a question"] --> A["Developer<br/>answers"] --> P["Agent performs<br/>the step"] --> Q
+
+    classDef loop fill:#2E7D32,stroke:#1B5E20,color:#fff
+    class Q,A,P loop
+```
+
+Instead of hand-writing the dedup query, the incremental config, the YAML descriptions, the tests and the documentation, the developer runs `/develop <source> <entity>`, answers each question in turn, and reviews the result. The agent does the boilerplate; the developer keeps the judgement. The payoff is faster properties files (descriptions and tests), models that follow the same conventions every time, and fewer review comments.
 
 **What it changed in practice.** It sped up the properties files significantly: test and column descriptions became much easier and faster to write. It also captured best practices through the iterations (see [Decision 10](#decision-10)).
 
