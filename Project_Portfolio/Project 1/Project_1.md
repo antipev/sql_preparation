@@ -6,7 +6,7 @@
 |---|---|
 | **Situation** | Skip partnered with TopSort to create a new revenue stream by enabling restaurants to run targeted ad campaigns directly on the Skip app. This required the campaign data to flow back into Skip's data platform, so that restaurants could see whether their ads worked. [Details](#1-situation--context-and-facts) |
 | **Task** | Build that data flow and deliver it to a campaign performance dashboard in the Partners' Portal: automatic, in local time, and ready for a fixed mid-July launch. The plan for how TopSort would deliver the data changed twice, and the last change landed on me. [Details](#2-task--the-obstacleproblem) |
-| **Action** | I built the pipelines end to end: a self-repairing daily extraction from TopSort, dbt models that clean and link the data, and our own customer segment history when TopSort's segments proved unreliable. I reused an existing stream, set up an agent-ready dbt project, pushed correctness of the data join back to TopSort, and built a semantic layer prototype. [Details](#3-action--what-i-did-and-why) |
+| **Action** | 1. I built the pipelines end to end: a) a self-repairing daily extraction from TopSort, b) dbt models that clean and link the data, and c) our own customer segment history when TopSort's segments proved unreliable. 2. I reused an existing stream 3. set up an agent-ready dbt project, 4. pushed correctness of the data join back to TopSort, and 5. built a semantic layer prototype. [Details](#3-action--what-i-did-and-why) |
 | **Result** | The project launched on time and all objectives were met. Restaurants use accurate metrics to plan their marketing budget and review campaigns, and the system keeps generating additional income for Skip. [Details](#4-result--outcome-and-learning) |
 
 ---
@@ -770,7 +770,8 @@ flowchart LR
 
 ### Building dbt with an agentic workflow
 
-I set up the dbt project so that people and an AI coding agent follow the same conventions. It was my own idea, in June 2026, once Claude was available. I built the first models, then the folder structure, then wrote the markdown files from what each iteration taught me. Pre-commit checks, SQL linting and naming checks came later.
+I enabled Agentic Workflow `develop` for the dbt project so Canadian Analytics Engnineering Team can follow the same conventions and speed up the development. It was my own idea, in June 2026, once Claude was available. I built the first models, then the folder structure, then wrote the markdown files from what each iteration. 
+Pre-commit checks, SQL linting and naming checks came later.
 
 ```text
 dbt project/
@@ -809,7 +810,7 @@ dbt project/
 - Every model needs a properties file and at least two tests.
 - No hardcoded table names: only `ref()` or `source()`.
 - Never commit directly to the main branch.
-- SQL style: uppercase keywords, lowercase names, explicit table aliases, CTEs instead of subqueries.
+- SQL style: **uppercase keywords, lowercase names, explicit table aliases, CTEs instead of subqueries**.
 - Dimension tables are materialized as tables, never incremental, and their descriptions are persisted to BigQuery.
 
 ```mermaid
@@ -848,7 +849,8 @@ flowchart LR
     class T,I,R,I2,E,M skip
 ```
 
-### Customer segment history (type 2 table)
+### Customer segment history (Slowly Changing Dimension Type 2)
+- tracks historical changes by creating a brand-new row whenever a piece of dimension data changes (like a customer changing their address or last name)
 
 **What it is.** One row per customer and restaurant for each period in which that customer had the same segment, with a start date and an end date. An open row (end date empty) is the current segment. Because history is kept, a purchase can be matched with the segment the customer had *on the day of the purchase*.
 
@@ -857,7 +859,8 @@ flowchart LR
 | C1 | R1 | returning | 15 Jun | 20 Aug |
 | C1 | R1 | winback | 21 Aug | *(open)* |
 
-**How a daily run works.** There is no loop in the code. A generated list of days does the same job in one query, in four steps:
+**How a daily run works.** SQL code consist of two parts: 1) Generate table of records 2) MERGE to table if changes happened, repeat 1. 
+A generated list of days does the same job in one query, in four steps:
 
 ```mermaid
 flowchart LR
@@ -877,7 +880,7 @@ The decisions behind these four steps, and how each is implemented:
 
 **Why a hand-written MERGE and not the dbt snapshot feature.** I had not used snapshots before, and I needed manual control of how the SQL runs.
 
-**Better source data.** The legacy segment queries read a BI-owned staging table of orders, built by a daily finance staging job, and in practice it refreshed late (about 2 days), so recent orders were still not marked completed and customers were wrongly left out of segments. They also worked in local time. The history table reads the order table of the company's core data warehouse, which is the organization's single source of truth and is refreshed often, keeps only orders with status completed, and uses UTC dates, as TopSort and Skip systems do.
+**Better source data.** The `legacy` segment queries read a BI-owned staging table of orders, built by a daily finance staging job, and in practice it refreshed late (about 2 days), so recent orders were still not marked completed and customers were wrongly left out of segments. They also worked in local time. The `new` history table reads the order table of the company's core data warehouse, which is the organization's single source of truth and is refreshed often, keeps only orders with status completed, and uses UTC dates, as TopSort and Skip systems do.
 
 **Where it is used.** The dbt enrich layer replaces the segments provided by TopSort with this table, and the BI analysts' egress job later switched to it as its source, as a more trusted one (see [Decision 5](#decision-5)). A separate model keeps the Skip Plus membership periods, rebuilt in full on each run.
 
