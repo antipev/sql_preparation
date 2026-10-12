@@ -953,7 +953,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A["1. Pull source<br/>metadata"] --> B["2. Confirm<br/>folder"] --> C["3. Write<br/>SQL"] --> D["4. Properties<br/>YAML + tests"] --> E["5. Run dbt,<br/>lint, pre-commit"] --> F["6. Report +<br/>docs, ERD"]
+    subgraph DEV["/develop skill:<br/>scaffold a model, step by step"]
+        A["1. Pull source<br/>metadata"] --> B["2. Confirm<br/>folder"] --> C["3. Write<br/>SQL"] --> D["4. Properties<br/>YAML + tests"] --> E["5. Run dbt,<br/>lint, pre-commit"] --> F["6. Report +<br/>docs, ERD"]
+    end
 
     classDef hero fill:#2E7D32,stroke:#1B5E20,color:#fff
     class A,B,C,D,E,F hero
