@@ -748,8 +748,8 @@ flowchart LR
     A[("Raw tables<br/>from ingestion")] --> B["Staging:Deduplicate<br/>keep the latest copy of each row"]
     B --> C["Staging:Clean<br/>rename, type, keep local time,<br/>rebuild the last 14 days"]
     C --> D["Intermediate:Enrich<br/>add customer segment on the purchase date,<br/>campaign type"]
-    D --> E[("Mart:Reporting tables<br/>one per subject")]
-    E --> F["Mart:Bridge<br/>one view that links them all"]
+    D --> E[("Marts:Reporting tables<br/>one per subject")]
+    E --> F["Marts:Bridge<br/>one view that links them all"]
 
     classDef skip fill:#F28C38,stroke:#B35F12,color:#000
     class A,B,C,D,E,F skip
