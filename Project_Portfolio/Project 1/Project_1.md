@@ -555,7 +555,7 @@ The conditions of this project were set before I joined: the early design decisi
 *Technical*
 
 1. **Make every load safe to repeat.** A watermark with a lookback window, deleting the overlap, and an all-or-nothing load mean a failed or missed run repairs itself, and nobody backfills by hand (see [Decision 1](#decision-1)).
-2. **Keep history, not only today's state.** The segment history table (type 2) keeps what cannot be rebuilt later (see [Decision 5](#decision-5)).
+2. **Keep history, not only today's state.** The segment history table (Slowly Changing Dimension Type 2) keeps what cannot be rebuilt later (see [Decision 5](#decision-5)).
 3. **Test a vendor's logic before relying on it.** Porting TopSort's SQL and checking that the results were identical was cheap, and it paid off when TopSort's segments proved unreliable.
 4. **Build joins once, not in every report.** Shared keys and a bridge let analysts and the semantic layer combine any tables without custom queries (see [Decision 6](#decision-6)).
 5. **Reuse what exists.** Extending an existing stream is faster and safer than building a second one (see [Decision 3](#decision-3)).
