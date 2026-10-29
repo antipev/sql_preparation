@@ -1,3 +1,6 @@
 # Claude Example practice scratch dir (kept local, not tracked)
 Practice_general/Claude Example/
 Practice_general/Portfolio_Shareability_Assessment_Projects_3_4.md
+
+# VS Code workspace settings (machine-local, written by the Python extension)
+.vscode/
