@@ -4,11 +4,23 @@
 
 | # | Asset | Theme | Type | Link |
 |---|---|---|---|---|
-| 1 | Modeling Techniques 1 | Data modeling | LinkedIn post | [lnkd.in/p/gwGCFsuf](https://lnkd.in/p/gwGCFsuf) |
-| 2 | Modeling Techniques 2 | Data modeling | LinkedIn post | [lnkd.in/p/gBDYY9gm](https://lnkd.in/p/gBDYY9gm) |
-| 3 | Modeling Techniques 3 | Data modeling | LinkedIn post | [lnkd.in/p/gQQqtuwc](https://lnkd.in/p/gQQqtuwc) |
-| 4 | Leadership | Leadership and mentoring | LinkedIn post | [lnkd.in/p/gEG2m7Sg](https://lnkd.in/p/gEG2m7Sg) |
+| 1 | Measure branching + USS | Data modeling: one model instead of join-per-use-case | LinkedIn post | [lnkd.in/p/gwGCFsuf](https://lnkd.in/p/gwGCFsuf) |
+| 2 | A data mart is not a table | Data modeling: analytical mart and mart sprawl | LinkedIn post | [lnkd.in/p/gBDYY9gm](https://lnkd.in/p/gBDYY9gm) |
+| 3 | USS in Looker: fewer Explorers | Data modeling: governed metrics in LookML | LinkedIn post | [lnkd.in/p/gQQqtuwc](https://lnkd.in/p/gQQqtuwc) |
+| 4 | Influence from the middle | Leadership: the 360° Leader | LinkedIn post | [lnkd.in/p/gEG2m7Sg](https://lnkd.in/p/gEG2m7Sg) |
 | 5 | Malloy Publisher | BI, semantic layer and MCP | Live app | [malloy-publisher-mcp-bolcwt6srq-nn.a.run.app](https://malloy-publisher-mcp-bolcwt6srq-nn.a.run.app/) |
+| 6 | Recognition: Restaurant Recommender | Machine learning: BigQuery ML shipped to production | LinkedIn shout-out | [lnkd.in/p/gH6WuVx5](https://lnkd.in/p/gH6WuVx5) |
+
+---
+
+## Recognition: Restaurant Recommender
+
+**What it is:** a public post by **Stan Chen** (SkipTheDishes) giving a shout-out to Maksim Antipev, Marcelo D., Kristin Keller and Yansong Fu for bringing the **Restaurant Recommender** feature live. Post: [lnkd.in/p/gH6WuVx5](https://lnkd.in/p/gH6WuVx5).
+
+- **Origin:** a hackathon experiment with **BigQuery ML on Google Cloud**, focused on restaurant recommendations.
+- **What shipped:** the recommendation system went live in the app using a **matrix factorization** model, delivered with a larger team after the hackathon.
+- **What users see:** the **“Trending near you”** feature in the SkipTheDishes app.
+- **Why it matters:** third-party, public proof that an ML prototype moved from hackathon to a live, customer-facing feature — recognition from the business, not a self-assessment.
 
 ---
 
