@@ -522,6 +522,8 @@ flowchart TB
 | Reach and response | Impressions, charged clicks, click-through rate, conversion, orders |
 | Who bought | New, returning, winback and Skip Plus customers |
 
+Metric definitions and the Malloy measures behind them are collected in the [Malloy Metrics Reference](Malloy_Metrics_Reference.md).
+
 **The cycle keeps running**: restaurants spend more marketing budget, which brings extra revenue to Skip and TopSort, and they spend it more wisely, for example by promoting specific dishes and meals. The system is running and generating additional income for the company.
 
 **Scale, without business numbers.** One daily batch pipeline loads four TopSort tables. One existing stream was extended with 12 tables. Four daily dbt jobs build nine linked reporting tables and a bridge, plus a customer segment history table. Ten decisions in this document shaped the design, and a semantic layer prototype sits on top.
@@ -873,7 +875,7 @@ Examples of materialization from `Topsort` ingestion:
 ```
 
 
-**Metrics exposed.** Revenue (promoted sales), orders, ad spend, impressions, charged clicks, click-through rate, conversion, cost per order, cost per click, return on ad spend, average order value, and new, returning, winback and Skip Plus customers. They are defined once in the semantic layer prototype (see [A.6](#a6-semantic-layer-prototype)).
+**Metrics exposed.** Revenue (promoted sales), orders, ad spend, impressions, charged clicks, click-through rate, conversion, cost per order, cost per click, return on ad spend, average order value, and new, returning, winback and Skip Plus customers. They are defined once in the semantic layer prototype (see [A.6](#a6-semantic-layer-prototype)), and listed with their definitions and Malloy measures in the [Malloy Metrics Reference](Malloy_Metrics_Reference.md).
 
 **Local time.** The source tables already carry the local timestamps (hour and purchase time in the partner's local time) next to the UTC ones, and the models pass both through. 
 
@@ -1150,7 +1152,20 @@ egress config/
 
 **Status:** a prototype, published to a sandbox Cloud Run service. It is still work in progress because of infrastructure challenges.
 
-**What it is for:** the metrics (revenue, orders, ad spend, impressions, clicks, click-through rate, conversion, cost per order, cost per click, return on ad spend, average order value, and customers by segment) are defined **once**, in a *semantic layer*, so that every report, analyst and AI assistant calculates them the same way and gets the same number.
+**What it is for:** the metrics are defined **once**, in a *semantic layer*, so that every report, analyst and AI assistant calculates them the same way and gets the same number.
+
+**Metrics defined** (names only; the definitions and the Malloy measure behind each one are in the [Malloy Metrics Reference](Malloy_Metrics_Reference.md)):
+
+| Group | Metrics |
+|---|---|
+| Delivery | Impressions, clicks, charged clicks, charged impressions, click-through rate (CTR) |
+| Spend | Ad spend on clicks, on impressions and on attributed purchases; pinned campaign spend; cost per click (CPC) |
+| Purchases and returns | Purchases, purchase quantity, purchase amount, charged attributed purchases, conversion rate (CVR), return on ad spend (ROAS) |
+| Customer segments | New, returning, winback and Skip Plus customers, and their purchase counts, quantities and amounts |
+| Budget | Budget limit, used budget, budget clicks |
+| Campaign setup | Campaign count, budget, target ROAS, bidding type |
+
+The [Malloy Metrics Reference](Malloy_Metrics_Reference.md) also holds the watch-outs: money is stored in cents, customer counts for daily, weekly and monthly views are distinct counts, and CTR and CPC use charged clicks. In the portal these appear under business names, such as revenue (promoted sales) for purchase amount and orders for purchases.
 
 **Intended users:** BI analysts and the product team, for self-service. Business users may follow later (not yet clear). AI agents access the semantic layer too.
 
@@ -1315,7 +1330,7 @@ MAX(IF(
 
 [↑ Back to the summary](#summary)
 **Choose Malloy for the semantic layer**
-- **Context:** The same metrics were needed by BI analysts, the product team and, increasingly, AI agents. Without a shared definition, each report would calculate them differently.
+- **Context:** The same metrics (listed with their definitions in the [Malloy Metrics Reference](Malloy_Metrics_Reference.md)) were needed by BI analysts, the product team and, increasingly, AI agents. Without a shared definition, each report would calculate them differently.
 - **Options considered:** a semantic layer built with Malloy; or reporting tables only, with each report defining its own metrics.
 - **Choice:** Malloy.
 - **Why:** It is open source and run on our own compute. Models, queries and dashboards are code, kept in Git and shipped through CI/CD. It supports an AI agent that works with the models, so agents can be given access to the data safely. I also know it well, as a contributor to its community, where my testimonial on the [Credible website](https://www.credibledata.com/) reads:
@@ -1361,6 +1376,7 @@ MAX(IF(
 
 # Appendix C — Links and References
 
+- [Malloy Metrics Reference](Malloy_Metrics_Reference.md): every metric in the semantic layer, with its definition and the Malloy measure behind it
 - [TopSort Data Room](https://docs.topsort.com/en/knowledge-base/ad-platform/reporting-and-analytics/data-room#data-room)
 - [TopSort Segments API](https://docs.topsort.com/en/ad-server/additional-apis/segments-api)
 - [TopSort segments setup](https://docs.topsort.com/en/knowledge-base/ad-platform/campaign-targeting/segments/setup)

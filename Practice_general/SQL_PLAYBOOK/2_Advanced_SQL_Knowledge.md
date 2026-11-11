@@ -246,6 +246,10 @@ clear: we treat reports and data products as code, just like data models.
 
 
 
+**Diagram (the data contract loop):**
+
+![Data contract loop](Data%20contract%20Loop.png)
+
 ## Architectural Patterns for Data Pipelines
 
 In `batch processing`, data is collected over a set period, such as hourly, daily, or weekly, and then processed in large chunks. The main trade-off of batch processing is data latency. 
@@ -859,6 +863,38 @@ or performance. For SQL users, this makes graph databases feel less like a radic
 departure and more like a natural extension of relational modeling when relationships
 become the primary question.
 ---
+
+
+## Building Data Engineering Solutions with SQL
+
+Some parts **of the system**, specifically 
+- streaming ingestion engines (**such as Spark Structured Streaming**), 
+- orchestration services, and 
+- storage maintenance processes like compaction and snapshot management, 
+involve system-level concerns beyond pure SQL syntax. Some of these components are used in practical form throughout the chapter, but the focus remains on how they integrate with SQL-based modeling layers rather than on the low-level operational engineering required to run them at scale.
+
+
+
+**Diagram (pipeline architecture):**
+
+![Pipeline architecture](Pipeline%20arhitecture.png)
+
+**Figure 5-1 illustrates the overall architecture of the pipeline, combining a real-time
+stream and a batch process into a unified SQL-based data platform (Lambda
+architecture).**
+In the speed layer, order events flow from the source system into a Pub/Sub topic
+in real time. In the batch layer, the source periodically exposes full extracts of
+each table via REST APIs. Both feeds land data into the Bronze layer (raw storage)
+backed by Iceberg. Downstream, a series of SQL transformations in dbt produce
+cleaned Silver layer views and aggregated Gold layer tables, ready to be consumed,
+whether directly or through the consume layer where the semantic layer resides.
+
+
+
+
+
+
+
 
 ## Spark, Apache Flink, CloudRun
 Spark is one of the most
